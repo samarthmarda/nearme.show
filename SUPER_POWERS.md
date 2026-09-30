@@ -1,0 +1,3 @@
+# Super Powers implementation plan
+
+The fixed board contains two Super Power spaces. Power definitions/inventory and authoritative validation remain a server phase. Required initial powers: Bomb (up to two rival properties, damage floor 50%, repair or expiry); Controlled Roll (choose before rolling); Free Hotel Pass (one eligible final upgrade waived); Jail Free Pass; Auction (timed 1–2 property exchange, property-only, locked assets, atomic ownership swap and configured exchange bonus). Do not represent local UI state as authoritative power inventory. See REALTIME_PROTOCOL.md for command validation and event sequencing.

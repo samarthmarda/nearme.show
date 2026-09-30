@@ -1,6 +1,6 @@
 {
-  "name": "nearme.show",
-  "description": "Hyperlocal discovery and commerce platform for Bengaluru. Connect with nearby shops, marketplace listings, property rentals, and services via WhatsApp and Rapido.",
-  "requestFramePermissions": ["geolocation"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "name": "Scam City",
+  "description": "An original social property strategy game for friends.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }
