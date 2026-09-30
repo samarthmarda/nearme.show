@@ -1,0 +1,3 @@
+# Database plan
+
+PostgreSQL/Prisma target: User (normalized unique username, password hash, verified email), Profile, Friendship, FriendRequest, Room, RoomPlayer, RulesetVersion, Game, GameProperty, PlayerPower, GameEvent, GameSnapshot, TransactionLedger, TradeOffer, ExchangeSession, ExchangeOffer, ChatMessage, GameResult, Notification and Report. Board definitions/rules are versioned separately from mutable match state. Use atomic database transactions for money and ownership changes. Retain append-only event history and snapshots for reconnect/replay. Never log password, reset token or session secrets.
