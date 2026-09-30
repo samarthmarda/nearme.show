@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOARD, RULES } from './rules';
-import { buy, choosePower, createGame, endTurn, netWorth, roll, rentFor, skipPower } from './engine';
+import { addPlayer, buy, choosePower, createGame, endTurn, netWorth, roll, rentFor, skipPower } from './engine';
 
 test('board is the specified 36 spaces and keeps the exact city group layout',()=>{
  assert.equal(BOARD.length,36);assert.deepEqual(BOARD.map(t=>t.name),['START','DELHI','HYDERABAD','BANGKOK','BOAT','MUMBAI','SUPER POWER','SINGAPORE','AMSTERDAM','BANK','JAKARTA','RAILWAYS','BERLIN','MOSCOW','TORONTO','BUS','SEOUL','HONG KONG','JAIL','ZURICH','ISRAEL','ELECTRICITY','RIYADH','IRAN','OIL MILL','SAUDI','DUBAI','SUPER POWER','PARIS','LONDON','NIAGARA WATER','BIRMINGHAM','CHICAGO','AIRPORT','CALIFORNIA','NEW YORK']);
  assert.deepEqual(BOARD.filter(t=>t.group==='green').map(t=>t.name),['DELHI','HYDERABAD','MUMBAI']);
  assert.equal(BOARD.some(t=>(t.kind as string)==='tax'),false);
 });
+test('players may join an active match without changing existing turn indexes',()=>{const s=createGame(['A','B']);s.phase='decision';s.turn=1;const joined=addPlayer(s,' C ');assert.equal(joined.players.length,3);assert.equal(joined.players[2].id,'p2');assert.equal(joined.players[2].name,'C');assert.equal(joined.players[2].cash,RULES.startingCashByOrder[2]);assert.equal(joined.turn,1);assert.equal(joined.phase,'decision');assert.equal(s.players.length,2);const full=createGame(['A','B','C','D','E','F']);assert.equal(addPlayer(full,'G'),full);full.phase='finished';assert.equal(addPlayer(full,'G'),full);});
 test('six-sided movement wraps and pays the configured start salary',()=>{
  const s=createGame(['A','B']);s.players[0].position=34;const result=roll(s,4);assert.equal(result.state.players[0].position,2);assert.equal(result.state.players[0].cash,1000+RULES.salary);
 });

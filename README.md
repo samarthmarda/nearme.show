@@ -1,6 +1,6 @@
 # Scam City
 
-Scam City is an original social property strategy game. This repository now includes a responsive browser client, a 36-space board, a pure game-engine slice, username/password accounts, friend lookup/add, online presence, private six-character rooms, real-time room/game sync, table chat and server-owned dice/property/rent/turn changes.
+Scam City is an original social property strategy game. This repository now includes a responsive browser client, a 36-space board, a pure game-engine slice, username/password accounts, friend lookup/add, online presence, six-character rooms joinable by any signed-in player until the host starts, real-time room/game sync, table chat and server-owned dice/property/rent/turn changes.
 
 ## Run locally
 
@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open the Vite-served app at the preview URL. Create separate accounts in two browser sessions, add each other by username, create a room, invite the online friend and start.
+Open the app at the Vite-served URL. In development, sign in with `ayush`, `chirag`, `aniket`, `rishi`, or `sam` (shared password `scamcity`), or create your own accounts. Create a game to get a six-character code; it stays visible at the bottom-left. Any signed-in player can join with that code without being a friend request, while the room has an open seat and the match has not ended. Start with at least two players.
 
 ## Commands
 
