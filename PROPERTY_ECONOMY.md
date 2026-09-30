@@ -13,4 +13,4 @@ City base rents are authoritative and configured on each city definition:
 
 Undeveloped group multipliers are 1×, 1.5×, 2× for one, two or three cities owned by that player. Completed-group development replaces those multipliers with levels 1–4 at 3×, 4×, 5×, 6× base rent. Condition multiplies rent by 100%, 75%, 50% or 25%. The engine's `rentFor` function is the single calculation path.
 
-Rules v1's configurable starting values: development cost $150; property liquidation 75% of listed price; building liquidation 50% of investment. The prompt does not set every city purchase cost; these are centralized starter values for tuning, not final balance.
+The specified Standard purchase prices are centralized in `src/game/rules.ts`. City liquidation is 80% of purchase price rounded to the nearest $5. Each development costs 55% of that property's purchase price, rounded to the nearest $5; buildings liquidate at 50% of development investment. Transport/utility purchase prices are retained from the existing prototype and remain tuning values. `rentFor` is the single rent calculation path; `calculateCityRent(propertyId, gameState)` exposes the state-based API.
