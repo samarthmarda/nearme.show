@@ -4,7 +4,7 @@ export const RULES = {
   version: 'scam-city-v1', boardVersion: '36-city-loop-v1',
   startingCashByOrder: [1000,1050,1100,1150,1200,1250], salary:300,
   victory: { targetNetWorth:5000, roundLimit:30 },
-  timing:{turnSeconds:30,propertySeconds:15,exchangeSeconds:60},
+  timing:{turnSeconds:30,propertySeconds:15,powerSeconds:20,exchangeSeconds:60},
   property:{ developmentCost:150, sellRate:.75, developmentSellRate:.5, conditionLevels:[1,.75,.5,.25] as number[], repairCost:100 },
   rent:{groupMultipliers:[1,1.5,2] as number[], developmentMultipliers:[3,4,5,6] as number[]},
   economy:{bankruptcyThreshold:3000,exchangeBonus:100},
@@ -19,4 +19,12 @@ export const BOARD:Tile[]=[
  {id:'jail',name:'JAIL',kind:'jail',tone:'#748579'},city('zurich','ZURICH','light-green',35,'#8ab56f',320),city('israel','ISRAEL','light-green',35,'#8ab56f',340),{id:'electricity',name:'ELECTRICITY',kind:'utility',price:360,rent:45,tone:'#eac85f'},city('riyadh','RIYADH','light-green',35,'#8ab56f',360),city('iran','IRAN','gold',40,'#d1ac4f',380),{id:'oil-mill',name:'OIL MILL',kind:'utility',price:400,rent:50,tone:'#eac85f'},city('saudi','SAUDI','gold',40,'#d1ac4f',420),city('dubai','DUBAI','gold',40,'#d1ac4f',440),
  {id:'power-2',name:'SUPER POWER',kind:'power',tone:'#efbd4e'},city('paris','PARIS','purple',40,'#9275bd',460),city('london','LONDON','purple',45,'#9275bd',480),{id:'niagara-water',name:'NIAGARA WATER',kind:'utility',price:500,rent:60,tone:'#65abc5'},city('birmingham','BIRMINGHAM','purple',55,'#9275bd',520),city('chicago','CHICAGO','red',60,'#d9675d',540),{id:'airport',name:'AIRPORT',kind:'transport',price:560,rent:70,tone:'#9a8ab5'},city('california','CALIFORNIA','red',65,'#d9675d',580),city('new-york','NEW YORK','red',70,'#d9675d',620),
 ];
+export const POWER_OPTIONS=[
+ {id:'bomb',name:'BOMB',icon:'✹',color:'#f17858',description:'Damage up to two rival properties. Their rent takes a hit.'},
+ {id:'controlled-roll',name:'CONTROLLED ROLL',icon:'⚄',color:'#56a9d1',description:'Choose a precise 1–6 roll before your next move.'},
+ {id:'hotel-pass',name:'FREE HOTEL PASS',icon:'▣',color:'#a18bd2',description:'Waive the cash cost of one eligible final upgrade.'},
+ {id:'jail-pass',name:'JAIL FREE PASS',icon:'↗',color:'#62ae78',description:'Keep in your pocket. Use it to walk out of Jail.'},
+ {id:'auction',name:'PROPERTY EXCHANGE',icon:'⇄',color:'#d7ac44',description:'Open a timed property-for-property exchange.'},
+] as const;
+export type PowerId=typeof POWER_OPTIONS[number]['id'];
 export const PRESETS={QUICK:{target:3000,rounds:20},STANDARD:{target:5000,rounds:30},LONG:{target:7000,rounds:40}} as const;

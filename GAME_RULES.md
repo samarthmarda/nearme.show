@@ -14,8 +14,9 @@ Scam City is a social property strategy game on the exact 36-tile board in `BOAR
 ## Presets
 QUICK: $3,000 / 20 rounds; STANDARD: $5,000 / 30; LONG: $7,000 / 40. The defaults exist in `PRESETS`; the current UI only presents the Standard configuration.
 
-## Implemented in local engine slice
-Board movement, dice value validation, START salary, Bank outcomes, city purchase, rent/group calculation, development, net worth and round-cap winner. See `BALANCING.md` for simulator limitations/results.
+## Implemented MVP flow
+Board movement, dice value validation, START salary, Bank outcomes, city purchase, rent/group calculation, development, net worth and round-cap winner are implemented. Shared rooms, hashed username/password accounts, friends/presence, chat, server-enforced turns and synchronized game commands are also implemented for the demo MVP. See `BALANCING.md` for simulator limitations/results.
 
-## Not yet implemented as production multiplayer mechanics
-Secure accounts, shared rooms, server authority, trades/exchanges, social donation/friend validation, concession, all five Super Powers, injury/recovery/debt settlement, timers enforced by server, event sequencing and persistent game snapshots. They are documented as target product features, not represented as working services.
+Landing on either SUPER POWER tile pauses the active turn and opens a server-validated choice among Bomb, Controlled Roll, Free Hotel Pass, Jail Free Pass, and Auction/Property Exchange. The selected power is added to the player's synchronized inventory and shown beside their player entry. The inventory/choice flow is implemented; activating the power effects, injury/recovery/debt settlement, player trades, and persistent game snapshots are not yet implemented. The named effects are design intent, not available gameplay actions in this MVP.
+
+In non-production mode, the server seeds five shared demo logins (`ayush`, `chirag`, `aniket`, `rishi`, `sam`; password `scamcity`) and makes them mutual friends. These fixed shared credentials are intentionally not created when `NODE_ENV=production`.
