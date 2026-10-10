@@ -1,44 +1,46 @@
-# Scam City board v1
+# Scam City board V2
 
-The authoritative `BOARD` array is in `src/game/rules.ts`. It contains exactly 36 clockwise spaces; index is position. Exact city, tile and group sequence from product rules is preserved.
+The authoritative `BOARD` array is in `src/game/rules.ts`. It contains 36 clockwise tiles and follows the current SCAMCITY sheet. Tile IDs are stable: the two-digit suffix is the clockwise board index.
 
 | Index | Tile | Kind / group |
 |---:|---|---|
 | 00 | START | start |
-| 01 | DELHI | Green |
-| 02 | HYDERABAD | Green |
-| 03 | BANGKOK | Light Blue |
-| 04 | BOAT | transport |
-| 05 | MUMBAI | Green |
-| 06 | SUPER POWER | power |
-| 07 | SINGAPORE | Light Blue |
-| 08 | AMSTERDAM | Light Blue |
+| 01 | DELHI | Green city |
+| 02 | HYDERABAD | Green city |
+| 03 | BANGKOK | Light Blue city |
+| 04 | SEVEN-11 | G10 business |
+| 05 | MUMBAI | Green city |
+| 06 | BOAT | G9 transport |
+| 07 | SINGAPORE | Light Blue city |
+| 08 | AMSTERDAM | Light Blue city |
 | 09 | BANK | bank |
-| 10 | JAKARTA | Pink |
-| 11 | RAILWAYS | transport |
-| 12 | BERLIN | Pink |
-| 13 | MOSCOW | Pink |
-| 14 | TORONTO | Orange |
-| 15 | BUS | transport |
-| 16 | SEOUL | Orange |
-| 17 | HONG KONG | Orange |
+| 10 | JAKARTA | Pink city |
+| 11 | RAILWAYS | G9 transport |
+| 12 | BERLIN | Pink city |
+| 13 | MOSCOW | Pink city |
+| 14 | TORONTO | Orange city |
+| 15 | SUPER POWER | power |
+| 16 | SEOUL | Orange city |
+| 17 | HONG KONG | Orange city |
 | 18 | JAIL | jail |
-| 19 | ZURICH | Light Green |
-| 20 | ISRAEL | Light Green |
-| 21 | ELECTRICITY | utility |
-| 22 | RIYADH | Light Green |
-| 23 | IRAN | Gold |
-| 24 | OIL MILL | utility |
-| 25 | SAUDI | Gold |
-| 26 | DUBAI | Gold |
+| 19 | ZURICH | Light Green city |
+| 20 | ISRAEL | Light Green city |
+| 21 | RAVE CLUB | G10 business |
+| 22 | RIYADH | Light Green city |
+| 23 | IRAN | Gold city |
+| 24 | PROPERTY TAX | fixed $50 landing fee |
+| 25 | SAUDI | Gold city |
+| 26 | DUBAI | Gold city |
 | 27 | SUPER POWER | power |
-| 28 | PARIS | Purple |
-| 29 | LONDON | Purple |
-| 30 | NIAGARA WATER | utility |
-| 31 | BIRMINGHAM | Purple |
-| 32 | CHICAGO | Red |
-| 33 | AIRPORT | transport |
-| 34 | CALIFORNIA | Red |
-| 35 | NEW YORK | Red |
+| 28 | PARIS | Purple city |
+| 29 | LONDON | Purple city |
+| 30 | GYM | G10 business |
+| 31 | BIRMINGHAM | Purple city |
+| 32 | CHICAGO | Red city |
+| 33 | AIRPORT | G9 transport |
+| 34 | CALIFORNIA | Red city |
+| 35 | NEW YORK | Red city |
 
-No tax or go-to-jail tile is part of the board. Prices and non-city rents are initial tunable values in the same board definitions. City base rents match `PROPERTY_ECONOMY.md`.
+City ownership groups are Green, Light Blue, Pink, Orange, Light Green, Gold, Purple, and Red. G9 (Boat, Railways, Airport) and G10 (Seven-11, Rave Club, Gym) are three-asset groups with their own sheet-specified rent tiers; they are not developable city sets. The Property Tax tile charges $50. Jail is a visit tile; there is no Go To Jail tile.
+
+Every property tile displays its group strip, value, owner marker, and any development indicator. Tap a tile to inspect the sheet's value, rent schedule, sell price, development costs, and owner. A landing is highlighted on the board and echoed in the center status panel.

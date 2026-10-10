@@ -1,6 +1,6 @@
 # Scam City
 
-Scam City is an original social property strategy game. This repository now includes a responsive browser client, a 36-space board, a pure game-engine slice, username/password accounts, friend lookup/add, online presence, six-character rooms joinable by any signed-in player until the host starts, real-time room/game sync, table chat and server-owned dice/property/rent/turn changes.
+Scam City is an original social property strategy game. This repository includes a responsive browser client, the 36-tile SCAMCITY V2 board and sheet-based property economy, automatic turn handoff/bonus-roll rules, a pure game engine, username/password accounts, friend lookup/add, online presence, six-character rooms joinable by signed-in players, real-time room/game sync, table chat and server-owned dice/property/rent changes.
 
 ## Run locally
 

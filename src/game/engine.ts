@@ -1,28 +1,492 @@
-import { BOARD, POWER_OPTIONS, RULES, type PowerId, type Tile } from './rules';
-export type PlayerStatus='ACTIVE'|'JAILED'|'DISTRESSED'|'BANKRUPT'|'FORFEITED';
-export type Player={id:string;name:string;avatar:string;cash:number;position:number;properties:string[];jailed:boolean;debt:number;status:PlayerStatus;condition:Record<string,number>;powers:string[]};
-export type GameState={players:Player[];owners:Record<string,string>;buildings:Record<string,number>;round:number;turn:number;phase:'roll'|'decision'|'power'|'finished';message:string;lastRoll:number|null;winner:string|null;activity:string[]};
-export type GameEvent={type:string;text:string;payload?:Record<string,unknown>};
-const avatars=['#e96d52','#5b9bd3','#d5b84d','#7dbb77','#9b78bb','#43a9a2'];
-export const createGame=(names:string[]):GameState=>({players:names.slice(0,6).map((name,i)=>({id:`p${i}`,name,avatar:avatars[i],cash:RULES.startingCashByOrder[i],position:0,properties:[],jailed:false,debt:0,status:'ACTIVE',condition:{},powers:[]})),owners:{},buildings:{},round:1,turn:0,phase:'roll',message:'Roll to start your turn.',lastRoll:null,winner:null,activity:['The table is set. Scam City is live.']});
-export const currentPlayer=(s:GameState)=>s.players[s.turn];
-export function addPlayer(s:GameState,name:string):GameState{if(s.phase==='finished'||s.players.length>=6||!name.trim())return s;const n=structuredClone(s),index=n.players.length;n.players.push({id:`p${index}`,name:name.trim().slice(0,24),avatar:avatars[index],cash:RULES.startingCashByOrder[index],position:0,properties:[],jailed:false,debt:0,status:'ACTIVE',condition:{},powers:[]});addActivity(n,`${name.trim()} joined the game.`);return n;}
-export const calculateNetWorth=(p:Player,s:GameState)=>p.cash+p.properties.reduce((sum,id)=>{const tile=BOARD.find(t=>t.id===id);return sum+(tile?.sellValue??0)+(s.buildings[id]??0)*(tile?.developmentCost??0)*RULES.property.developmentSellRate;},0)-p.debt;
-export const netWorth=(s:GameState,p:Player)=>calculateNetWorth(p,s);
-export const groupComplete=(s:GameState,p:Player,group:string)=>BOARD.filter(t=>t.group===group).every(t=>s.owners[t.id]===p.id);
-export function rentFor(s:GameState,tile:Tile,owner:Player){let amount=tile.rent??0;const level=s.buildings[tile.id]??0;if(tile.group&&level===0){const owned=BOARD.filter(t=>t.group===tile.group&&s.owners[t.id]===owner.id).length;amount*=RULES.rent.groupMultipliers[Math.max(0,owned-1)]??2;}else if(level>0)amount=(tile.rent??0)*(RULES.rent.developmentMultipliers[level-1]??6);else if(tile.kind==='transport'){const owned=BOARD.filter(t=>t.kind==='transport'&&s.owners[t.id]===owner.id).length;amount=RULES.transport.rentPerOwned*owned;}else if(tile.kind==='utility'){const owned=BOARD.filter(t=>t.kind==='utility'&&s.owners[t.id]===owner.id).length;amount=RULES.utilities.rentPerOwned*owned;}amount*=owner.condition[tile.id]??1;return Math.max(0,Math.round(amount));}
-export const calculateCityRent=(propertyId:string,s:GameState)=>{const tile=BOARD.find(candidate=>candidate.id===propertyId),ownerId=s.owners[propertyId],owner=s.players.find(candidate=>candidate.id===ownerId);return tile&&owner?rentFor(s,tile,owner):0;};
-function addActivity(s:GameState,text:string){s.activity=[text,...s.activity].slice(0,12);s.message=text;}
-function randomInt(max:number){if(!Number.isInteger(max)||max<1)throw new RangeError('Random bound must be a positive integer.');const cryptoApi=globalThis.crypto;if(!cryptoApi?.getRandomValues)throw new Error('A secure random number generator is required.');const limit=Math.floor(0x1_0000_0000/max)*max;const value=new Uint32Array(1);do{cryptoApi.getRandomValues(value);}while(value[0]>=limit);return value[0]%max;}
-export function roll(s:GameState,value?:number,rng:(max:number)=>number=randomInt):{state:GameState;events:GameEvent[]}{if(s.phase!=='roll'||s.winner)return{state:s,events:[]};const n=structuredClone(s),p=currentPlayer(n),from=p.position;const result=value??rng(6)+1;if(!Number.isInteger(result)||result<1||result>6)return{state:s,events:[]};const raw=from+result;p.position=raw%BOARD.length;if(raw>=BOARD.length){p.cash+=RULES.salary;addActivity(n,`${p.name} collected $${RULES.salary} from START.`);}n.phase='decision';n.lastRoll=result;const tile=BOARD[p.position];
- if(tile.kind==='city'||tile.kind==='transport'||tile.kind==='utility'){const owner=n.owners[tile.id];if(owner&&owner!==p.id){const other=n.players.find(x=>x.id===owner)!;const rent=rentFor(n,tile,other),paid=Math.min(p.cash,rent);p.cash-=paid;other.cash+=paid;addActivity(n,`${p.name} paid $${paid} rent to ${other.name} for ${tile.name}.`);}else addActivity(n,`${p.name} landed on ${tile.name}.`);}
- else if(tile.kind==='bank'){const bankTotal=RULES.bank.outcomes.reduce((total,item)=>total+item.weight,0);let bankTicket=rng(bankTotal);const outcome=RULES.bank.outcomes.find(item=>{bankTicket-=item.weight;return bankTicket<0})??RULES.bank.outcomes[0];if(outcome.type==='cash'){p.cash=Math.max(0,p.cash+outcome.amount);addActivity(n,`${outcome.amount>=0?'Lucky! ':'Bank fee: '}${p.name} ${outcome.amount>=0?'got':'paid'} $${Math.abs(outcome.amount)} at the Bank.`);}else if(outcome.type==='lowest'){const other=n.players.filter(x=>x.id!==p.id&&x.status==='ACTIVE').sort((a,b)=>a.cash-b.cash)[0];if(other){other.cash+=outcome.amount;p.cash=Math.max(0,p.cash-outcome.amount);addActivity(n,`${p.name} paid $${outcome.amount} to ${other.name} at the Bank.`);}}else if(outcome.type==='move'){const old=p.position;const dest=(old+outcome.spaces+BOARD.length)%BOARD.length;if(outcome.spaces>0&&dest<old){p.cash+=RULES.salary;addActivity(n,`${p.name} collected $${RULES.salary} from START.`);}p.position=dest;addActivity(n,`${p.name} was moved ${outcome.spaces>0?'forward':'back'} ${Math.abs(outcome.spaces)} at the Bank.`);const landed=BOARD[dest],ownerId=n.owners[landed.id];if(ownerId&&ownerId!==p.id&&['city','transport','utility'].includes(landed.kind)){const receiver=n.players.find(x=>x.id===ownerId)!;const amount=rentFor(n,landed,receiver),paid=Math.min(p.cash,amount);p.cash-=paid;receiver.cash+=paid;addActivity(n,`${p.name} paid $${paid} rent to ${receiver.name} after the Bank move.`);}}else{const destinations=BOARD;const destination=destinations[rng(destinations.length)];const old=p.position,newPosition=BOARD.findIndex(t=>t.id===destination.id);if(newPosition<old)p.cash+=RULES.salary;p.position=newPosition;addActivity(n,`${p.name} travelled to ${destination.name} from the Bank.`);const ownerId=n.owners[destination.id];if(ownerId&&ownerId!==p.id){const receiver=n.players.find(x=>x.id===ownerId)!;const amount=rentFor(n,destination,receiver),paid=Math.min(p.cash,amount);p.cash-=paid;receiver.cash+=paid;addActivity(n,`${p.name} paid $${paid} after the Bank travel.`);}}}
- else if(tile.kind==='jail')addActivity(n,`${p.name} is visiting Jail. Keep your eyes open.`);else if(tile.kind==='power'){const power=POWER_OPTIONS[rng(POWER_OPTIONS.length)];p.powers.push(power.id);n.phase='decision';addActivity(n,`${p.name} received ${power.name} at the Super Power stop.`);}finishIfWon(n);return{state:n,events:[{type:'DICE_ROLLED',text:n.message,payload:{value:result,position:p.position}}]};}
-export function buy(s:GameState):GameState{if(s.phase!=='decision')return s;const n=structuredClone(s),p=currentPlayer(n),tile=BOARD[p.position];if(!['city','transport','utility'].includes(tile.kind)||n.owners[tile.id]||!tile.price||p.cash<tile.price)return s;p.cash-=tile.price;p.properties.push(tile.id);n.owners[tile.id]=p.id;addActivity(n,`${p.name} bought ${tile.name} for $${tile.price}.`);finishIfWon(n);return n;}
-export function build(s:GameState,id:string):GameState{const n=structuredClone(s),p=currentPlayer(n),tile=BOARD.find(t=>t.id===id);if(!tile?.group||n.owners[id]!==p.id||!groupComplete(n,p,tile.group)||p.cash<(tile.developmentCost??0)||(n.buildings[id]??0)>=4)return s;p.cash-=tile.developmentCost??0;n.buildings[id]=(n.buildings[id]??0)+1;addActivity(n,`${p.name} developed ${tile.name} to level ${n.buildings[id]}.`);finishIfWon(n);return n;}
-export function passProperty(s:GameState):GameState{const n=structuredClone(s);addActivity(n,`${currentPlayer(n).name} passed on ${BOARD[currentPlayer(n).position].name}.`);return n;}
-export function choosePower(s:GameState,id:PowerId):GameState{if(s.phase!=='power'||!POWER_OPTIONS.some(power=>power.id===id))return s;const n=structuredClone(s),p=currentPlayer(n);p.powers.push(id);n.phase='decision';addActivity(n,`${p.name} claimed ${POWER_OPTIONS.find(power=>power.id===id)!.name}.`);finishIfWon(n);return n;}
-export function skipPower(s:GameState):GameState{if(s.phase!=='power')return s;const n=structuredClone(s);addActivity(n,`${currentPlayer(n).name} passed on the Super Power.`);n.phase='decision';return endTurn(n);}
-export function endTurn(s:GameState):GameState{if(s.phase!=='decision')return s;const n=structuredClone(s);n.turn=(n.turn+1)%n.players.length;if(n.turn===0)n.round++;n.phase='roll';n.lastRoll=null;addActivity(n,`${currentPlayer(n).name}'s turn.`);if(n.round>RULES.victory.roundLimit){n.winner=[...n.players].sort((a,b)=>netWorth(n,b)-netWorth(n,a))[0].id;n.phase='finished';addActivity(n,`${n.players.find(p=>p.id===n.winner)?.name} wins Scam City!`);}return n;}
-function finishIfWon(s:GameState){const winner=s.players.find(p=>netWorth(s,p)>=RULES.victory.targetNetWorth);if(winner){s.winner=winner.id;s.phase='finished';addActivity(s,`${winner.name} reached the wealth target and wins Scam City!`);}}
-export const tileAt=(position:number):Tile=>BOARD[position];
+import {
+  BOARD,
+  POWER_OPTIONS,
+  RULES,
+  type PowerId,
+  type Tile,
+} from "./rules";
+
+export type PlayerStatus =
+  | "ACTIVE"
+  | "JAILED"
+  | "DISTRESSED"
+  | "BANKRUPT"
+  | "FORFEITED";
+
+export type Player = {
+  id: string;
+  name: string;
+  avatar: string;
+  cash: number;
+  position: number;
+  properties: string[];
+  jailed: boolean;
+  debt: number;
+  status: PlayerStatus;
+  condition: Record<string, number>;
+  powers: string[];
+};
+
+export type LastLanding = {
+  playerId: string;
+  tileId: string;
+  roll: number;
+};
+
+export type GameState = {
+  players: Player[];
+  owners: Record<string, string>;
+  buildings: Record<string, number>;
+  round: number;
+  turn: number;
+  phase: "roll" | "decision" | "power" | "finished";
+  message: string;
+  lastRoll: number | null;
+  lastLanding: LastLanding | null;
+  winner: string | null;
+  activity: string[];
+};
+
+export type GameEvent = {
+  type: string;
+  text: string;
+  payload?: Record<string, unknown>;
+};
+
+const avatars = [
+  "#e96d52",
+  "#5b9bd3",
+  "#d5b84d",
+  "#7dbb77",
+  "#9b78bb",
+  "#43a9a2",
+];
+const propertyKinds = new Set(["city", "transport", "business"]);
+
+export const createGame = (names: string[]): GameState => ({
+  players: names.slice(0, 6).map((name, index) => ({
+    id: `p${index}`,
+    name,
+    avatar: avatars[index],
+    cash: RULES.startingCashByOrder[index],
+    position: 0,
+    properties: [],
+    jailed: false,
+    debt: 0,
+    status: "ACTIVE",
+    condition: {},
+    powers: [],
+  })),
+  owners: {},
+  buildings: {},
+  round: 1,
+  turn: 0,
+  phase: "roll",
+  message: "Roll to start your turn.",
+  lastRoll: null,
+  lastLanding: null,
+  winner: null,
+  activity: ["The table is set. Scam City is live."],
+});
+
+export const currentPlayer = (state: GameState) => state.players[state.turn];
+
+export function addPlayer(state: GameState, name: string): GameState {
+  if (state.phase === "finished" || state.players.length >= 6 || !name.trim()) {
+    return state;
+  }
+  const next = structuredClone(state);
+  const index = next.players.length;
+  next.players.push({
+    id: `p${index}`,
+    name: name.trim().slice(0, 24),
+    avatar: avatars[index],
+    cash: RULES.startingCashByOrder[index],
+    position: 0,
+    properties: [],
+    jailed: false,
+    debt: 0,
+    status: "ACTIVE",
+    condition: {},
+    powers: [],
+  });
+  addActivity(next, `${name.trim()} joined the game.`);
+  return next;
+}
+
+export const calculateNetWorth = (player: Player, state: GameState) =>
+  player.cash +
+  player.properties.reduce((sum, id) => {
+    const tile = BOARD.find((candidate) => candidate.id === id);
+    return (
+      sum +
+      (tile?.sellValue ?? 0) +
+      (state.buildings[id] ?? 0) *
+        (tile?.developmentCost ?? 0) *
+        RULES.property.developmentSellRate
+    );
+  }, 0) -
+  player.debt;
+
+export const netWorth = (state: GameState, player: Player) =>
+  calculateNetWorth(player, state);
+
+export const groupComplete = (
+  state: GameState,
+  player: Player,
+  group: string,
+) =>
+  BOARD.filter((tile) => tile.group === group).every(
+    (tile) => state.owners[tile.id] === player.id,
+  );
+
+export function rentFor(state: GameState, tile: Tile, owner: Player): number {
+  const level = state.buildings[tile.id] ?? 0;
+  const schedule = tile.rentSchedule;
+  let amount = tile.rent ?? 0;
+
+  if (tile.kind === "city" && level > 0 && schedule?.development) {
+    amount = schedule.development[level - 1] ?? schedule.development[3];
+  } else if (tile.group && schedule) {
+    const ownedCount = BOARD.filter(
+      (candidate) =>
+        candidate.group === tile.group && state.owners[candidate.id] === owner.id,
+    ).length;
+    amount =
+      ownedCount >= 3
+        ? schedule.three
+        : ownedCount === 2
+          ? schedule.two
+          : schedule.one;
+  }
+
+  amount *= owner.condition[tile.id] ?? 1;
+  return Math.max(0, Math.round(amount));
+}
+
+export const calculateCityRent = (propertyId: string, state: GameState) => {
+  const tile = BOARD.find((candidate) => candidate.id === propertyId);
+  const ownerId = state.owners[propertyId];
+  const owner = state.players.find((candidate) => candidate.id === ownerId);
+  return tile && owner ? rentFor(state, tile, owner) : 0;
+};
+
+function addActivity(state: GameState, text: string) {
+  state.activity = [text, ...state.activity].slice(0, 12);
+  state.message = text;
+}
+
+function randomInt(max: number) {
+  if (!Number.isInteger(max) || max < 1) {
+    throw new RangeError("Random bound must be a positive integer.");
+  }
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi?.getRandomValues) {
+    throw new Error("A secure random number generator is required.");
+  }
+  const limit = Math.floor(0x1_0000_0000 / max) * max;
+  const value = new Uint32Array(1);
+  do {
+    cryptoApi.getRandomValues(value);
+  } while (value[0] >= limit);
+  return value[0] % max;
+}
+
+function finishIfWon(state: GameState) {
+  const winner = state.players.find(
+    (player) => netWorth(state, player) >= RULES.victory.targetNetWorth,
+  );
+  if (winner) {
+    state.winner = winner.id;
+    state.phase = "finished";
+    addActivity(state, `${winner.name} reached the wealth target and wins Scam City!`);
+  }
+}
+
+function advanceToNextPlayer(state: GameState) {
+  state.turn = (state.turn + 1) % state.players.length;
+  if (state.turn === 0) state.round += 1;
+  state.phase = "roll";
+  state.lastRoll = null;
+
+  if (state.round > RULES.victory.roundLimit) {
+    state.winner = [...state.players].sort(
+      (a, b) => netWorth(state, b) - netWorth(state, a),
+    )[0].id;
+    state.phase = "finished";
+    addActivity(
+      state,
+      `${state.players.find((player) => player.id === state.winner)?.name} wins Scam City!`,
+    );
+    return;
+  }
+
+  addActivity(state, `${currentPlayer(state).name}'s turn.`);
+}
+
+/** Resolve turn continuation after all automatic effects and pending choices. */
+function continueAfterLanding(state: GameState) {
+  if (state.phase === "finished") return;
+  if (state.lastRoll === 6) {
+    state.phase = "roll";
+    addActivity(state, `${currentPlayer(state).name} rolled a 6. Roll again!`);
+    return;
+  }
+  advanceToNextPlayer(state);
+}
+
+function isPurchasable(tile: Tile) {
+  return propertyKinds.has(tile.kind) && typeof tile.price === "number";
+}
+
+export function roll(
+  state: GameState,
+  value?: number,
+  rng: (max: number) => number = randomInt,
+): { state: GameState; events: GameEvent[] } {
+  if (state.phase !== "roll" || state.winner) {
+    return { state, events: [] };
+  }
+  const next = structuredClone(state);
+  const player = currentPlayer(next);
+  const from = player.position;
+  const result = value ?? rng(6) + 1;
+  if (!Number.isInteger(result) || result < 1 || result > 6) {
+    return { state, events: [] };
+  }
+
+  const rawPosition = from + result;
+  player.position = rawPosition % BOARD.length;
+  if (rawPosition >= BOARD.length) {
+    player.cash += RULES.salary;
+    addActivity(next, `${player.name} collected $${RULES.salary} from START.`);
+  }
+  next.lastRoll = result;
+  const landedTile = BOARD[player.position];
+
+  if (isPurchasable(landedTile)) {
+    const ownerId = next.owners[landedTile.id];
+    if (ownerId && ownerId !== player.id) {
+      const owner = next.players.find((candidate) => candidate.id === ownerId)!;
+      const rent = rentFor(next, landedTile, owner);
+      const paid = Math.min(player.cash, rent);
+      player.cash -= paid;
+      owner.cash += paid;
+      addActivity(
+        next,
+        `${player.name} paid ${formatMoney(paid)} rent to ${owner.name} for ${landedTile.name}.`,
+      );
+    } else {
+      addActivity(next, `${player.name} landed on ${landedTile.name}.`);
+    }
+
+    if (!ownerId) {
+      next.phase = "decision";
+    }
+  } else if (landedTile.kind === "bank") {
+    const totalWeight = RULES.bank.outcomes.reduce(
+      (total, outcome) => total + outcome.weight,
+      0,
+    );
+    let ticket = rng(totalWeight);
+    const outcome =
+      RULES.bank.outcomes.find((item) => {
+        ticket -= item.weight;
+        return ticket < 0;
+      }) ?? RULES.bank.outcomes[0];
+
+    if (outcome.type === "cash") {
+      player.cash = Math.max(0, player.cash + outcome.amount);
+      addActivity(
+        next,
+        `${outcome.amount >= 0 ? "Lucky! " : "Bank fee: "}${player.name} ${outcome.amount >= 0 ? "got" : "paid"} ${formatMoney(Math.abs(outcome.amount))} at the Bank.`,
+      );
+    } else if (outcome.type === "lowest") {
+      const other = next.players
+        .filter((candidate) => candidate.id !== player.id && candidate.status === "ACTIVE")
+        .sort((a, b) => a.cash - b.cash)[0];
+      if (other) {
+        other.cash += outcome.amount;
+        player.cash = Math.max(0, player.cash - outcome.amount);
+        addActivity(
+          next,
+          `${player.name} paid ${formatMoney(outcome.amount)} to ${other.name} at the Bank.`,
+        );
+      }
+    } else if (outcome.type === "move") {
+      const oldPosition = player.position;
+      const destination =
+        (oldPosition + outcome.spaces + BOARD.length) % BOARD.length;
+      if (outcome.spaces > 0 && destination < oldPosition) {
+        player.cash += RULES.salary;
+        addActivity(next, `${player.name} collected $${RULES.salary} from START.`);
+      }
+      player.position = destination;
+      addActivity(
+        next,
+        `${player.name} was moved ${outcome.spaces > 0 ? "forward" : "back"} ${Math.abs(outcome.spaces)} at the Bank.`,
+      );
+      const destinationTile = BOARD[destination];
+      const ownerId = next.owners[destinationTile.id];
+      if (ownerId && ownerId !== player.id && isPurchasable(destinationTile)) {
+        const owner = next.players.find((candidate) => candidate.id === ownerId)!;
+        const rent = rentFor(next, destinationTile, owner);
+        const paid = Math.min(player.cash, rent);
+        player.cash -= paid;
+        owner.cash += paid;
+        addActivity(
+          next,
+          `${player.name} paid ${formatMoney(paid)} rent to ${owner.name} after the Bank move.`,
+        );
+      }
+    } else {
+      const destination = BOARD[rng(BOARD.length)];
+      const oldPosition = player.position;
+      const destinationPosition = BOARD.findIndex(
+        (candidate) => candidate.id === destination.id,
+      );
+      if (destinationPosition < oldPosition) player.cash += RULES.salary;
+      player.position = destinationPosition;
+      addActivity(next, `${player.name} travelled to ${destination.name} from the Bank.`);
+      const ownerId = next.owners[destination.id];
+      if (ownerId && ownerId !== player.id && isPurchasable(destination)) {
+        const owner = next.players.find((candidate) => candidate.id === ownerId)!;
+        const rent = rentFor(next, destination, owner);
+        const paid = Math.min(player.cash, rent);
+        player.cash -= paid;
+        owner.cash += paid;
+        addActivity(next, `${player.name} paid ${formatMoney(paid)} after the Bank travel.`);
+      }
+    }
+  } else if (landedTile.kind === "tax") {
+    const tax = landedTile.taxAmount ?? 0;
+    const paid = Math.min(player.cash, tax);
+    player.cash -= paid;
+    addActivity(next, `${player.name} paid ${formatMoney(paid)} property tax.`);
+  } else if (landedTile.kind === "jail") {
+    addActivity(next, `${player.name} is visiting Jail. Keep your eyes open.`);
+  } else if (landedTile.kind === "power") {
+    const power = POWER_OPTIONS[rng(POWER_OPTIONS.length)];
+    player.powers.push(power.id);
+    addActivity(next, `${player.name} received ${power.name} at the Super Power stop.`);
+  }
+
+  next.lastLanding = {
+    playerId: player.id,
+    tileId: BOARD[player.position].id,
+    roll: result,
+  };
+
+  finishIfWon(next);
+  if (next.phase !== "finished" && next.phase !== "decision") {
+    continueAfterLanding(next);
+  }
+
+  return {
+    state: next,
+    events: [
+      {
+        type: "DICE_ROLLED",
+        text: next.message,
+        payload: { value: result, position: player.position },
+      },
+    ],
+  };
+}
+
+function formatMoney(amount: number) {
+  return `$${Math.round(amount).toLocaleString()}`;
+}
+
+export function buy(state: GameState): GameState {
+  if (state.phase !== "decision") return state;
+  const next = structuredClone(state);
+  const player = currentPlayer(next);
+  const tile = BOARD[player.position];
+  if (
+    !isPurchasable(tile) ||
+    next.owners[tile.id] ||
+    !tile.price ||
+    player.cash < tile.price
+  ) {
+    return state;
+  }
+
+  player.cash -= tile.price;
+  player.properties.push(tile.id);
+  next.owners[tile.id] = player.id;
+  addActivity(next, `${player.name} bought ${tile.name} for ${formatMoney(tile.price)}.`);
+  finishIfWon(next);
+  continueAfterLanding(next);
+  return next;
+}
+
+export function build(state: GameState, propertyId: string): GameState {
+  if (state.phase !== "roll") return state;
+  const next = structuredClone(state);
+  const player = currentPlayer(next);
+  const tile = BOARD.find((candidate) => candidate.id === propertyId);
+  const level = next.buildings[propertyId] ?? 0;
+  if (
+    !tile ||
+    tile.kind !== "city" ||
+    !tile.group ||
+    next.owners[propertyId] !== player.id ||
+    !groupComplete(next, player, tile.group) ||
+    player.cash < (tile.developmentCost ?? 0) ||
+    level >= 4
+  ) {
+    return state;
+  }
+
+  player.cash -= tile.developmentCost ?? 0;
+  next.buildings[propertyId] = level + 1;
+  addActivity(
+    next,
+    `${player.name} developed ${tile.name} to ${RULES.development.levels[level]}.`,
+  );
+  finishIfWon(next);
+  return next;
+}
+
+export function passProperty(state: GameState): GameState {
+  if (state.phase !== "decision") return state;
+  const next = structuredClone(state);
+  const player = currentPlayer(next);
+  const tile = BOARD[player.position];
+  if (!isPurchasable(tile) || next.owners[tile.id]) return state;
+  addActivity(next, `${player.name} passed on ${tile.name}.`);
+  continueAfterLanding(next);
+  return next;
+}
+
+export function choosePower(state: GameState, id: PowerId): GameState {
+  if (
+    state.phase !== "power" ||
+    !POWER_OPTIONS.some((power) => power.id === id)
+  ) {
+    return state;
+  }
+  const next = structuredClone(state);
+  const player = currentPlayer(next);
+  player.powers.push(id);
+  addActivity(
+    next,
+    `${player.name} claimed ${POWER_OPTIONS.find((power) => power.id === id)!.name}.`,
+  );
+  next.phase = "roll";
+  finishIfWon(next);
+  continueAfterLanding(next);
+  return next;
+}
+
+export function skipPower(state: GameState): GameState {
+  if (state.phase !== "power") return state;
+  const next = structuredClone(state);
+  addActivity(next, `${currentPlayer(next).name} passed on the Super Power.`);
+  next.phase = "roll";
+  continueAfterLanding(next);
+  return next;
+}
+
+export const tileAt = (position: number): Tile => BOARD[position];
