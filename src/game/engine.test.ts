@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addPlayer, build, buy, createGame, netWorth, passProperty, roll, rentFor } from "./engine";
+import { addPlayer, build, buy, choosePower, createGame, netWorth, passProperty, roll, rentFor } from "./engine";
 import { BOARD, RULES } from "./rules";
 
 test("the V2 board matches the 36 spaces and property groups in SCAMCITY", () => {
@@ -139,17 +139,23 @@ test("rolling a 6 onto an open property waits for the required choice, then keep
   assert.match(passed.message, /rolled a 6/);
 });
 
-test("a power landing resolves before the automatic next-player handoff", () => {
+test("landing on Super Power waits for the player's choice before the turn resumes", () => {
   const state = createGame(["A", "B"]);
   state.players[0].position = 14;
-  const result = roll(state, 1, () => 0).state;
-  assert.equal(result.players[0].position, 15);
-  assert.deepEqual(result.players[0].powers, ["bomb"]);
-  assert.equal(result.phase, "roll");
-  assert.equal(result.turn, 1);
-  assert.equal(result.lastRoll, null);
-  assert.match(result.message, /B's turn/);
-  assert.match(result.activity[1], /received BOMB/);
+  const landed = roll(state, 1, () => 0).state;
+  assert.equal(landed.players[0].position, 15);
+  assert.equal(landed.phase, "power");
+  assert.equal(landed.turn, 0);
+  assert.deepEqual(landed.players[0].powers, []);
+  assert.equal(landed.powerInteraction?.step, "CHOOSE");
+
+  const chosen = choosePower(landed, "rent-free");
+  assert.equal(chosen.phase, "roll");
+  assert.equal(chosen.turn, 1);
+  assert.equal(chosen.lastRoll, null);
+  assert.deepEqual(chosen.players[0].powers, ["rent-free"]);
+  assert.match(chosen.message, /B's turn/);
+  assert.match(chosen.activity[1], /activated RENT FREE ROUND/);
 });
 
 test("an ordinary resolved landing hands the dice to the next player automatically", () => {
@@ -214,15 +220,20 @@ test("the $50 Property Tax landing fee resolves before the dice pass", () => {
   assert.match(result.activity[1], /paid \$50 property tax/);
 });
 
-test("a Super Power award resolves before a bonus roll", () => {
+test("a Super Power choice resolves before a bonus roll", () => {
   const state = createGame(["A", "B"]);
   state.players[0].position = 9;
   const landed = roll(state, 6, () => 0).state;
   assert.equal(landed.players[0].position, 15);
-  assert.equal(landed.phase, "roll");
+  assert.equal(landed.phase, "power");
   assert.equal(landed.turn, 0);
   assert.equal(landed.lastRoll, 6);
-  assert.deepEqual(landed.players[0].powers, ["bomb"]);
+
+  const chosen = choosePower(landed, "rent-free");
+  assert.equal(chosen.phase, "roll");
+  assert.equal(chosen.turn, 0);
+  assert.equal(chosen.lastRoll, 6);
+  assert.match(chosen.message, /rolled a 6/);
 });
 
 test("purchases use spreadsheet prices and insufficient funds fail safely", () => {

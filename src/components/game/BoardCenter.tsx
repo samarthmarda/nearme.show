@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { Fragment, type CSSProperties } from "react";
 import {
   ArrowUpRight,
   Building2,
@@ -6,15 +6,29 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { POWER_OPTIONS, RULES, type PowerId, type Tile } from "../../game/rules";
-import type { GameState, Player } from "../../game/engine";
+import { BOARD, POWER_OPTIONS, RULES, type PowerId, type Tile } from "../../game/rules";
+import {
+  bombedRent,
+  currentRent,
+  powerActorIds,
+  powerAvailability,
+  powerEligibleIds,
+  powerSelectedIds,
+  type GameState,
+  type Player,
+  type PowerEvent,
+  type PowerInteraction,
+} from "../../game/engine";
 
 const fmt = (value: number) => "$" + Math.round(value).toLocaleString();
 
 export type BoardCenterProps = {
   game: GameState;
   player: Player;
+  /** True when the signed-in viewer is the active (turn) player. */
   isMyTurn: boolean;
+  /** Stable player id of the signed-in viewer (seat), used for power eligibility. */
+  viewerId: string;
   pendingTile: Tile | null;
   displayTile: Tile | null;
   tileOwner?: Player;
@@ -28,12 +42,20 @@ export type BoardCenterProps = {
   eventText: string;
   rolling: boolean;
   motionActive: boolean;
+  /** Board property the viewer has focused (its cue card). */
+  focusTile: Tile | null;
+  /** Latest server-confirmed power outcome to flash briefly. */
+  flash: PowerEvent | null;
   onRoll: () => void;
   onBuy: () => void;
   onPass: () => void;
   onBuild: (propertyId: string) => void;
   onChoosePower: (powerId: PowerId) => void;
   onPassPower: () => void;
+  onPowerSelect: (propertyId: string) => void;
+  onPowerConfirm: () => void;
+  onPowerDecline: () => void;
+  onPowerCancel: () => void;
   onCloseTile: () => void;
 };
 
@@ -322,39 +344,461 @@ function PropertyCard({
   );
 }
 
+function playerById(game: GameState, id: string | null | undefined) {
+  return id ? game.players.find((candidate) => candidate.id === id) : undefined;
+}
+
+function ownerOfProperty(game: GameState, propertyId: string) {
+  return playerById(game, game.owners[propertyId]);
+}
+
+const powerName = (kind: PowerId | null) =>
+  POWER_OPTIONS.find((power) => power.id === kind)?.name ?? "SUPER POWER";
+
+const powerIcon = (kind: PowerId | null) =>
+  POWER_OPTIONS.find((power) => power.id === kind)?.icon ?? "✦";
+
+const plural = (count: number, word: string) =>
+  `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** The live interaction, normalised so a bare "power" phase reads as choosing. */
+function interactionOf(game: GameState, fallbackInitiator: string): PowerInteraction {
+  return (
+    game.powerInteraction ?? {
+      id: 0,
+      kind: null,
+      step: "CHOOSE",
+      initiatorId: fallbackInitiator,
+      target: null,
+      give: null,
+      targetOwner: null,
+      offerFrom: null,
+      offers: {},
+      drafts: {},
+      declined: [],
+      deadline: null,
+    }
+  );
+}
+
 function WaitingCard({ player, tile, phase }: { player: Player; tile: Tile | null; phase: "decision" | "power" }) {
   return (
     <section className="center-card waiting-card" role="status" aria-live="polite">
       <div className="waiting-icon"><span>{phase === "power" ? "✦" : "…"}</span></div>
-      <span className="interaction-kicker">{phase === "power" ? "POWER PICK IN PROGRESS" : "PROPERTY DECISION IN PROGRESS"}</span>
-      <h2>Waiting for {player.name}</h2>
-      <p>{phase === "decision" ? `${tile?.name ?? "Property"} · Player is deciding whether to buy or pass.` : "Player is resolving their existing power choice."}</p>
+      <span className="interaction-kicker">{phase === "power" ? "SUPER POWER IN PROGRESS" : "PROPERTY DECISION IN PROGRESS"}</span>
+      <h2 className="waiting-name">
+        <i style={{ background: player.avatar }} /> Waiting for {player.name}…
+      </h2>
+      <p>{phase === "decision" ? `${tile?.name ?? "Property"} · Player is deciding whether to buy or pass.` : "Player is choosing or resolving a Super Power. Only they can act."}</p>
       <div className="waiting-public-note">The board and public game events stay visible to everyone.</div>
     </section>
   );
 }
 
-function PowerCard({ player, timerText, onChoose, onPass }: { player: Player; timerText: string; onChoose: (id: PowerId) => void; onPass: () => void }) {
+function PowerBox({
+  label,
+  tile,
+  game,
+  rent,
+  afterRent,
+  empty,
+  onClick,
+  selected,
+}: {
+  label: string;
+  tile?: Tile;
+  game: GameState;
+  rent?: number;
+  afterRent?: number;
+  empty?: string;
+  onClick?: () => void;
+  selected?: boolean;
+}) {
+  const owner = tile ? ownerOfProperty(game, tile.id) : undefined;
+  const level = tile ? game.buildings[tile.id] ?? 0 : 0;
+  const body = tile ? (
+    <>
+      <span className="sp-box-label">{label}</span>
+      <b className="sp-box-name">{tile.name}</b>
+      <small className="sp-box-owner">{owner ? `OWNER ${owner.name.toUpperCase()}` : "UNOWNED"}</small>
+      <span className="sp-box-rent">
+        RENT {fmt(rent ?? 0)}
+        {afterRent !== undefined && <> → <em>{fmt(afterRent)}</em></>}
+      </span>
+      {level > 0 && <span className="sp-box-tag">{RULES.development.levels[level - 1]}</span>}
+    </>
+  ) : (
+    <>
+      <span className="sp-box-label">{label}</span>
+      <span className="sp-box-empty">{empty ?? "EMPTY"}</span>
+    </>
+  );
+  const style = { "--owner": owner?.avatar ?? "#c9c4b8" } as CSSProperties;
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={`sp-box ${tile ? "sp-box-filled" : "sp-box-empty-state"} ${selected ? "sp-box-selected" : ""}`}
+        style={style}
+        onClick={onClick}
+        aria-label={tile ? `${label}: ${tile.name}` : label}
+      >
+        {body}
+      </button>
+    );
+  }
   return (
-    <section className="center-card power-card" aria-label="Special Power selection">
+    <div className={`sp-box ${tile ? "sp-box-filled" : "sp-box-empty-state"}`} style={style} aria-label={tile ? `${label}: ${tile.name}` : label}>
+      {body}
+    </div>
+  );
+}
+
+function SuperPowerPanel({
+  game,
+  interaction: i,
+  viewerId,
+  timerText,
+  focusTile,
+  onSelect,
+  onConfirm,
+  onDecline,
+  onCancel,
+}: {
+  game: GameState;
+  interaction: PowerInteraction;
+  viewerId: string;
+  timerText: string;
+  focusTile: Tile | null;
+  onSelect: (propertyId: string) => void;
+  onConfirm: () => void;
+  onDecline: () => void;
+  onCancel: () => void;
+}) {
+  const kind = i.kind;
+  const initiator = playerById(game, i.initiatorId);
+  const isInitiator = i.initiatorId === viewerId;
+  const actors = powerActorIds(game);
+  const canAct = actors.includes(viewerId);
+  const eligible = powerEligibleIds(game, viewerId);
+  const selectedIds = powerSelectedIds(game, viewerId);
+  const focusEligible = focusTile && canAct && eligible.includes(focusTile.id) ? focusTile : null;
+  const waiting = actors.filter((id) => id !== viewerId).map((id) => playerById(game, id)).filter(Boolean) as Player[];
+  const offerEntries = Object.entries(i.offers);
+  const offerPlayers = offerEntries.map(([playerId, propertyId]) => ({
+    player: playerById(game, playerId),
+    tile: BOARD.find((tile) => tile.id === propertyId),
+  }));
+  const tileOf = (id: string | null) => (id ? BOARD.find((tile) => tile.id === id) : undefined);
+  const targetTile = tileOf(i.target);
+  const giveTile = tileOf(i.give);
+  const myDraft = tileOf(i.drafts[viewerId] ?? null);
+  const offeredTile = i.offerFrom ? tileOf(i.offers[i.offerFrom] ?? null) : undefined;
+  const option = POWER_OPTIONS.find((power) => power.id === kind);
+  const tone = option?.color ?? "#d7ac44";
+
+  let kicker = "SUPER POWER";
+  let instruction = "";
+  let primary: { label: string; enabled: boolean } | null = null;
+  let decline = false;
+
+  switch (i.step) {
+    case "BOMB_TARGET":
+      kicker = `BOMB · ${timerText}`;
+      instruction = isInitiator
+        ? "Select a rival property on the board. The bomb halves its rent. Ownership does not change."
+        : `${initiator?.name ?? "The player"} is choosing a BOMB target.`;
+      primary = { label: "RELEASE", enabled: Boolean(targetTile && eligible.includes(i.target ?? "")) };
+      break;
+    case "SWAP_OPPONENT":
+      kicker = `POWER SWAP · STEP 1 OF 2 · ${timerText}`;
+      instruction = isInitiator
+        ? "Select an opponent's property first. This is the property you RECEIVE."
+        : `${initiator?.name ?? "The player"} is choosing a rival property to receive.`;
+      break;
+    case "SWAP_OWN":
+      kicker = `POWER SWAP · STEP 2 OF 2 · ${timerText}`;
+      instruction = isInitiator
+        ? "Now select one of your properties to GIVE. The rival property stays locked until you confirm."
+        : `${initiator?.name ?? "The player"} is choosing a property to give.`;
+      primary = { label: "POWER SWAP", enabled: Boolean(targetTile && giveTile) };
+      break;
+    case "AUCTION_INITIATOR":
+      kicker = `AUCTION · ${timerText}`;
+      instruction = isInitiator
+        ? "Offer one of your properties. Rival players may then each submit one offer."
+        : `${initiator?.name ?? "The player"} is choosing a property to offer.`;
+      primary = { label: "CONFIRM PROPERTY", enabled: Boolean(targetTile) };
+      break;
+    case "AUCTION_OFFERS":
+      kicker = `AUCTION · OFFERS OPEN · ${timerText}`;
+      if (isInitiator) {
+        instruction = offerEntries.length
+          ? offeredTile
+            ? "Review both properties side by side, then TRADE to complete the exchange."
+            : "Click an offer below to select it, then TRADE."
+          : "Waiting for rival offers. Click an offer to review it.";
+        primary = { label: "TRADE", enabled: Boolean(i.offerFrom && offeredTile && targetTile) };
+      } else if (canAct) {
+        instruction = "Select one of your properties to offer, then submit, or pass.";
+        primary = { label: "SUBMIT OFFER", enabled: Boolean(myDraft && !i.offers[viewerId]) };
+        decline = true;
+      } else {
+        instruction = i.offers[viewerId]
+          ? "Your offer is in. Waiting for the other players."
+          : "You passed on this Auction. Waiting for the other players.";
+      }
+      break;
+    default:
+      instruction = "";
+  }
+
+  const actionLabel = (tile: Tile) => {
+    const owner = ownerOfProperty(game, tile.id);
+    switch (i.step) {
+      case "BOMB_TARGET":
+        return "SELECT TARGET";
+      case "SWAP_OPPONENT":
+        return "SELECT TO RECEIVE";
+      case "SWAP_OWN":
+        return owner?.id === viewerId ? "SELECT TO GIVE" : "SELECT TO RECEIVE";
+      case "AUCTION_INITIATOR":
+        return "SELECT TO OFFER";
+      case "AUCTION_OFFERS":
+        return isInitiator ? "SELECT THIS OFFER" : "SELECT TO OFFER";
+      default:
+        return "SELECT";
+    }
+  };
+
+  const boxes = (() => {
+    switch (i.step) {
+      case "BOMB_TARGET":
+        return (
+          <PowerBox
+            label="TARGET"
+            tile={targetTile}
+            game={game}
+            rent={targetTile ? currentRent(game, targetTile.id) : undefined}
+            afterRent={targetTile ? bombedRent(currentRent(game, targetTile.id)) : undefined}
+            empty="SELECT A RIVAL PROPERTY"
+          />
+        );
+      case "SWAP_OPPONENT":
+      case "SWAP_OWN":
+        return (
+          <>
+            <PowerBox label="YOU RECEIVE" tile={targetTile} game={game} rent={targetTile ? currentRent(game, targetTile.id) : undefined} empty="RIVAL PROPERTY" selected />
+            <PowerBox label="YOU GIVE" tile={giveTile} game={game} rent={giveTile ? currentRent(game, giveTile.id) : undefined} empty={i.step === "SWAP_OWN" ? "YOUR PROPERTY" : "LOCKED"} selected />
+          </>
+        );
+      case "AUCTION_INITIATOR":
+        return <PowerBox label="YOUR OFFER" tile={targetTile} game={game} rent={targetTile ? currentRent(game, targetTile.id) : undefined} empty="YOUR PROPERTY" />;
+      case "AUCTION_OFFERS":
+        if (isInitiator && offeredTile && targetTile) {
+          return (
+            <>
+              <PowerBox label="YOU GIVE" tile={targetTile} game={game} rent={currentRent(game, targetTile.id)} />
+              <PowerBox label="YOU RECEIVE" tile={offeredTile} game={game} rent={currentRent(game, offeredTile.id)} />
+            </>
+          );
+        }
+        return (
+          <div className="sp-offer-grid">
+            <PowerBox label="YOUR OFFER" tile={targetTile} game={game} rent={targetTile ? currentRent(game, targetTile.id) : undefined} />
+            {offerPlayers.map(({ player, tile }) =>
+              tile ? (
+                <Fragment key={player?.id ?? tile.id}>
+                  <PowerBox
+                    label={`OFFER · ${player?.name.toUpperCase() ?? ""}`}
+                    tile={tile}
+                    game={game}
+                    rent={currentRent(game, tile.id)}
+                    onClick={isInitiator ? () => onSelect(tile.id) : undefined}
+                    selected={i.offerFrom === player?.id}
+                  />
+                </Fragment>
+              ) : null,
+            )}
+            {canAct && myDraft && <PowerBox label="YOUR DRAFT" tile={myDraft} game={game} rent={currentRent(game, myDraft.id)} />}
+          </div>
+        );
+      default:
+        return null;
+    }
+  })();
+
+  return (
+    <section className="center-card super-power-panel" aria-label={`${powerName(kind)} interaction`} style={{ "--power-tone": tone } as CSSProperties}>
+      <header className="sp-header">
+        <span className="power-icon" aria-hidden="true">{powerIcon(kind)}</span>
+        <div>
+          <span className="sp-kicker">{kicker}</span>
+          <h2>{powerName(kind)}</h2>
+        </div>
+        {initiator && (
+          <span className="sp-initiator" style={{ "--player-color": initiator.avatar } as CSSProperties}>
+            <i /> {initiator.name}
+          </span>
+        )}
+      </header>
+      <p className="sp-status" role="status" aria-live="polite">
+        {canAct ? instruction : ""}
+      </p>
+      {!canAct && (
+        <div className="sp-waiting" role="status">
+          {waiting.length ? (
+            waiting.map((player) => (
+              <span key={player.id} className="sp-waiting-name">
+                <i style={{ background: player.avatar }} /> Waiting for player {player.name}…
+              </span>
+            ))
+          ) : (
+            <span>{instruction}</span>
+          )}
+        </div>
+      )}
+      {i.step === "AUCTION_OFFERS" && (
+        <div className="sp-auction-summary">
+          {plural(offerEntries.length, "offer")} in · {plural(i.declined.length, "pass")} · {plural(Math.max(0, game.players.length - 1 - offerEntries.length - i.declined.length), "pending")}
+        </div>
+      )}
+      <div className={`sp-boxes sp-boxes-${i.step === "SWAP_OPPONENT" || i.step === "SWAP_OWN" || (i.step === "AUCTION_OFFERS" && isInitiator && offeredTile) ? "pair" : "single"}`}>
+        {boxes}
+      </div>
+      {focusEligible && (
+        <div className="sp-cue" aria-label="Property cue card">
+          <span className="sp-cue-strip" style={{ background: ownerOfProperty(game, focusEligible.id)?.avatar ?? "#c9c4b8" }} />
+          <div className="sp-cue-copy">
+            <span>{focusEligible.group ? `GROUP ${focusEligible.group}` : focusEligible.kind.toUpperCase()}</span>
+            <b>{focusEligible.name}</b>
+            <small>
+              {ownerOfProperty(game, focusEligible.id)?.name ?? "Unowned"} · RENT {fmt(currentRent(game, focusEligible.id))}
+              {i.step === "BOMB_TARGET" && <> → {fmt(bombedRent(currentRent(game, focusEligible.id)))}</>}
+            </small>
+          </div>
+          <span className={`sp-state ${selectedIds.includes(focusEligible.id) ? "sp-state-selected" : "sp-state-eligible"}`}>
+            {selectedIds.includes(focusEligible.id) ? "SELECTED" : "ELIGIBLE"}
+          </span>
+          <button type="button" className="property-action primary-action sp-cue-action" onClick={() => onSelect(focusEligible.id)}>
+            {actionLabel(focusEligible)}
+          </button>
+        </div>
+      )}
+      <footer className="sp-actions">
+        {isInitiator && (
+          <button type="button" className="property-action secondary-action sp-cancel" onClick={onCancel}>
+            CANCEL
+          </button>
+        )}
+        {decline && (
+          <button type="button" className="property-action secondary-action sp-cancel" onClick={onDecline}>
+            NO OFFER
+          </button>
+        )}
+        {primary && canAct && (
+          <button type="button" className="property-action primary-action sp-primary" disabled={!primary.enabled} onClick={onConfirm}>
+            {primary.label}
+          </button>
+        )}
+        {!primary && i.step !== "AUCTION_OFFERS" && <span className="sp-hint">Click a highlighted property on the board.</span>}
+      </footer>
+    </section>
+  );
+}
+
+function PowerChoicePanel({
+  player,
+  timerText,
+  availability,
+  canChoose,
+  onChoose,
+  onCancel,
+}: {
+  player: Player;
+  timerText: string;
+  availability: Record<PowerId, string | null>;
+  canChoose: boolean;
+  onChoose: (id: PowerId) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section className="center-card power-card super-power-panel" aria-label="Super Power selection">
       <header className="power-card-header">
         <span className="power-icon"><Sparkles size={20} /></span>
         <div><span>SPECIAL POWER · {timerText}</span><h2>Choose your edge</h2></div>
       </header>
+      <p className="sp-status" role="status">{player.name} landed on SUPER POWER. Pick one of the four powers.</p>
       <div className="power-card-options">
-        {POWER_OPTIONS.map((power) => (
-          <button className="power-card-option" key={power.id} onClick={() => onChoose(power.id)} style={{ "--power-tone": power.color } as CSSProperties}>
-            <span className="power-option-symbol">{power.icon}</span>
-            <span><b>{power.name}</b><small>{power.description}</small></span>
-            <ArrowUpRight size={15} />
-          </button>
-        ))}
+        {POWER_OPTIONS.map((power) => {
+          const blocked = availability[power.id as PowerId];
+          return (
+            <button
+              className="power-card-option"
+              key={power.id}
+              disabled={!canChoose || Boolean(blocked)}
+              onClick={() => onChoose(power.id as PowerId)}
+              style={{ "--power-tone": power.color } as CSSProperties}
+              title={blocked ?? undefined}
+            >
+              <span className="power-option-symbol">{power.icon}</span>
+              <span><b>{power.name}</b><small>{blocked ?? power.description}</small></span>
+              <ArrowUpRight size={15} />
+            </button>
+          );
+        })}
       </div>
       <footer className="power-card-actions">
         <span>FOR {player.name.toUpperCase()} · CHOICE LOCKS WHEN SELECTED</span>
-        <button className="property-action secondary-action" onClick={onPass}>PASS POWER</button>
+        {canChoose && (
+          <button className="property-action secondary-action sp-cancel" onClick={onCancel}>CANCEL</button>
+        )}
       </footer>
     </section>
+  );
+}
+
+const flashHeading: Record<PowerEvent["kind"], string> = {
+  bomb: "BOMB HIT",
+  "power-swap": "POWER SWAP COMPLETE",
+  auction: "AUCTION COMPLETE",
+  "rent-free": "RENT FREE ACTIVE",
+  "rent-blocked": "RENT BLOCKED",
+  "rent-free-ended": "RENT FREE ENDED",
+  "power-cancelled": "POWER CANCELLED",
+  "power-timeout": "POWER TIMED OUT",
+  "auction-expired": "AUCTION EXPIRED",
+};
+
+export function PowerFlash({ event }: { event: PowerEvent }) {
+  return (
+    <div className={`power-flash power-flash-${event.kind}`} role="status" aria-live="polite">
+      <span>{flashHeading[event.kind]}</span>
+      <strong>{event.text}</strong>
+    </div>
+  );
+}
+
+/** Rent Free protection status. Stays visible until the server expires it. */
+export function RentFreeStrip({ game }: { game: GameState }) {
+  const entries = Object.entries(game.rentFree ?? {});
+  if (!entries.length) return null;
+  return (
+    <>
+      {entries.map(([playerId, status]) => {
+        const player = playerById(game, playerId);
+        if (!player) return null;
+        return (
+          <div className="rent-free-strip" key={playerId} role="status" style={{ "--player-color": player.avatar } as CSSProperties}>
+            <span className="rf-dot" aria-hidden="true" />
+            <b>RENT FREE ACTIVE</b>
+            <span className="rf-player">{player.name}</span>
+            <span className="rf-circuits">{plural(status.remainingCircuits, "circuit")} left</span>
+            <small>Protection ends after {plural(status.remainingCircuits, "more START crossing")}.</small>
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -363,6 +807,7 @@ export function BoardCenter(props: BoardCenterProps) {
     game,
     player,
     isMyTurn,
+    viewerId,
     pendingTile,
     displayTile,
     tileOwner,
@@ -376,6 +821,8 @@ export function BoardCenter(props: BoardCenterProps) {
     eventText,
     rolling,
     motionActive,
+    focusTile,
+    flash,
     onRoll,
     onBuy,
     onPass,
@@ -383,6 +830,10 @@ export function BoardCenter(props: BoardCenterProps) {
     onChoosePower,
     onPassPower,
     onCloseTile,
+    onPowerSelect,
+    onPowerConfirm,
+    onPowerDecline,
+    onPowerCancel,
   } = props;
 
   if (game.phase === "decision") {
@@ -408,17 +859,43 @@ export function BoardCenter(props: BoardCenterProps) {
         ) : (
           <WaitingCard player={player} tile={pendingTile} phase="decision" />
         )}
+        <RentFreeStrip game={game} />
       </div>
     );
   }
 
   if (game.phase === "power") {
+    const interaction = interactionOf(game, player.id);
+    const initiator = playerById(game, interaction.initiatorId) ?? player;
+    const choosing = interaction.kind === null || interaction.step === "CHOOSE";
+    const viewerIsInitiator = interaction.initiatorId === viewerId;
     return (
-      <div className="board-center board-interaction board-center-power">
-        {isMyTurn ? (
-          <PowerCard player={player} timerText={timerText} onChoose={onChoosePower} onPass={onPassPower} />
+      <div className={`board-center board-interaction board-center-power ${choosing ? "board-center-power-choose" : "board-center-power-action"}`}>
+        {choosing ? (
+          viewerIsInitiator || isMyTurn ? (
+            <PowerChoicePanel
+              player={initiator}
+              timerText={timerText}
+              availability={powerAvailability(game, initiator.id)}
+              canChoose={viewerIsInitiator || isMyTurn}
+              onChoose={onChoosePower}
+              onCancel={onPassPower}
+            />
+          ) : (
+            <WaitingCard player={initiator} tile={null} phase="power" />
+          )
         ) : (
-          <WaitingCard player={player} tile={null} phase="power" />
+          <SuperPowerPanel
+            game={game}
+            interaction={interaction}
+            viewerId={viewerId}
+            timerText={timerText}
+            focusTile={focusTile}
+            onSelect={onPowerSelect}
+            onConfirm={onPowerConfirm}
+            onDecline={onPowerDecline}
+            onCancel={onPowerCancel}
+          />
         )}
       </div>
     );
@@ -427,6 +904,8 @@ export function BoardCenter(props: BoardCenterProps) {
   if (game.phase === "roll" && displayTile) {
     return (
       <div className="board-center board-interaction board-center-inspect">
+        {flash && <PowerFlash event={flash} />}
+        <RentFreeStrip game={game} />
         <PropertyCard
           tile={displayTile}
           owner={tileOwner}
@@ -468,6 +947,8 @@ export function BoardCenter(props: BoardCenterProps) {
         <span>✦ LIVE CITY · ROUND {game.round}</span>
         <span className="center-round">{isMyTurn ? "YOUR MOVE" : `${player.name.toUpperCase()} TO ACT`}</span>
       </div>
+      {flash && <PowerFlash event={flash} />}
+      <RentFreeStrip game={game} />
       <div className="center-art"><CityHallIllustration /></div>
       <div className="center-brand-title">SCAM CITY <span>✦</span></div>
       <div className="center-sub">BUILD YOUR EMPIRE · TRUST NOBODY</div>

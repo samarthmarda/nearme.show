@@ -8,6 +8,7 @@ import {
 import { io, type Socket } from "socket.io-client";
 import { AuthView } from "./AuthView";
 import { BoardCenter } from "./components/game/BoardCenter";
+import { MissileOverlay } from "./components/game/PowerEffects";
 import { ChatMessageList, type ChatMessageView } from "./components/game/ChatMessageList";
 import {
   ArrowLeft,
@@ -25,14 +26,17 @@ import {
   X,
 } from "lucide-react";
 import { BRAND } from "./brand";
-import { BOARD, POWER_OPTIONS, RULES } from "./game/rules";
+import { BOARD, POWER_OPTIONS, RULES, type PowerId, type Tile } from "./game/rules";
 import {
   createGame,
   currentPlayer,
   netWorth,
+  powerEligibleIds,
+  powerSelectedIds,
   rentFor,
   tileAt,
   type GameState,
+  type PowerEvent,
 } from "./game/engine";
 import "./index.css";
 import "./v2.css";
@@ -47,6 +51,10 @@ type RoomView = {
   turnDeadline?: number | null;
 };
 const fmt = (v: number) => "$" + Math.round(v).toLocaleString();
+const powerName = (kind: PowerId | null) =>
+  POWER_OPTIONS.find((power) => power.id === kind)?.name ?? "CHOOSE A POWER";
+const propertyLike = (tile: Tile) =>
+  tile.kind === "city" || tile.kind === "transport" || tile.kind === "business";
 const initial = createGame([""]);
 function tilePos(i: number) {
   if (i === 0) return { gridColumn: 1, gridRow: 10 };
@@ -114,13 +122,25 @@ export default function App() {
       setRoomInfo(room);
       if (enteringGame && room.game) setGame(room.game);
     });
+    live.on("connect", () => {
+      // After a reconnect the socket must rejoin its room to receive the
+      // authoritative state (including any open Super Power interaction).
+      const code = activeRoomCode.current;
+      if (!code) return;
+      live.emit("room:join", code, (r: { ok: boolean; room?: RoomView }) => {
+        if (r?.ok && r.room?.game) {
+          setGame(r.room.game);
+          setRoomInfo(r.room);
+        }
+      });
+    });
     live.on("game:state", (state: GameState) => {
       if (suppressState.current) {
         suppressState.current = false;
         return;
       }
       setGame(state);
-      if (state.phase === "decision" || state.phase === "power") {
+      if (state.phase === "decision") {
         setSelected(null);
       }
     });
@@ -205,9 +225,64 @@ export default function App() {
     canDevelop && player.cash >= (displayTile?.developmentCost ?? Infinity),
   );
   const timerText = `00:${String(secondsLeft).padStart(2, "0")}`;
+  // Super Power eligibility and selection are computed by the same shared
+  // engine function on the server; this only decides what this viewer may click.
+  const powerEligible = new Set(
+    game.phase === "power" ? powerEligibleIds(game, selfPlayerId) : [],
+  );
+  const powerSelected = new Set(
+    game.phase === "power" ? powerSelectedIds(game, selfPlayerId) : [],
+  );
+  const powerFocusTile =
+    game.phase === "power" && selectedTile && powerEligible.has(selectedTile.id)
+      ? selectedTile
+      : null;
+  const [powerFlash, setPowerFlash] = useState<PowerEvent | null>(null);
+  const seenPowerEvent = useRef<number | null>(null);
+  const boardGridRef = useRef<HTMLDivElement | null>(null);
+  const powerIdentity = game.powerInteraction
+    ? `${game.powerInteraction.id}:${game.powerInteraction.step}`
+    : "none";
+  useEffect(() => {
+    // Selections and highlights never outlive the step that created them.
+    setSelected(null);
+  }, [powerIdentity]);
+  useEffect(() => {
+    const event = game.powerEvent;
+    if (!event) return;
+    if (seenPowerEvent.current === null) {
+      // First state seen in this session: remember it without replaying it.
+      seenPowerEvent.current = event.id;
+      return;
+    }
+    if (event.id === seenPowerEvent.current) return;
+    seenPowerEvent.current = event.id;
+    setPowerFlash(event);
+    const timer = window.setTimeout(() => setPowerFlash(null), 4200);
+    return () => window.clearTimeout(timer);
+  }, [game.powerEvent]);
   const notify = (text: string) => {
     setNotice(text);
     window.setTimeout(() => setNotice(""), 3000);
+  };
+  // Super Power commands. The server validates the actor, eligibility and the
+  // interaction id; a successful ack carries the authoritative state.
+  const sendPower = (command: Record<string, unknown>) => {
+    if (!roomInfo?.started || !socket) {
+      notify("Create or join a real player table before making a move.");
+      return;
+    }
+    socket.emit(
+      "game:command",
+      { ...command, interactionId: game.powerInteraction?.id },
+      (result: { ok: boolean; error?: string; state?: GameState }) => {
+        if (!result.ok) {
+          notify(result.error || "That Super Power action could not be completed.");
+          return;
+        }
+        if (result.state) setGame(result.state);
+      },
+    );
   };
   const applyCommand = (type: string, propertyId?: string) => {
     if (!roomInfo?.started || !socket) {
@@ -870,9 +945,7 @@ export default function App() {
                     : "YOUR TURN · AUTO PASS ON 1–5"
                   : `${player.name.toUpperCase()}'S TURN`
                 : game.phase === "power"
-                  ? isMyTurn
-                    ? "POWER PICK"
-                    : `${player.name.toUpperCase()} PICKING POWER`
+                  ? `SUPER POWER · ${powerName(game.powerInteraction?.kind ?? null)}`
                   : game.phase === "decision"
                     ? isMyTurn
                       ? "PROPERTY CHOICE · BUY OR PASS"
@@ -920,7 +993,7 @@ export default function App() {
             ))}
           </div>
           <div className="board-wrap">
-            <div className="board-grid">
+            <div className="board-grid" ref={boardGridRef}>
               {BOARD.map((tile, i) => {
                 const owner = players.find(
                   (p) => p.id === game.owners[tile.id],
@@ -932,7 +1005,8 @@ export default function App() {
                 const price = tile.price;
                 return (
                   <button
-                    className={`tile tile-${tile.kind} ${selected === tile.id ? "tile-selected" : ""} ${game.lastLanding?.tileId === tile.id ? "tile-landed" : ""} ${owner ? "tile-owned" : ""} ${displayTile?.group && displayTile.group === tile.group ? "tile-group-highlight" : ""} ${tokenPlayers.length ? "has-token" : ""}`}
+                    data-tile-id={tile.id}
+                    className={`tile tile-${tile.kind} ${selected === tile.id ? "tile-selected" : ""} ${game.lastLanding?.tileId === tile.id ? "tile-landed" : ""} ${owner ? "tile-owned" : ""} ${displayTile?.group && displayTile.group === tile.group ? "tile-group-highlight" : ""} ${tokenPlayers.length ? "has-token" : ""} ${powerEligible.has(tile.id) ? "tile-power-eligible" : ""} ${powerSelected.has(tile.id) ? "tile-power-selected" : ""}`}
                     aria-label={`${tile.name}${price ? `, value ${fmt(price)}` : ""}${owner ? `, owned by ${owner.name}` : ""}${game.lastLanding?.tileId === tile.id ? ", last landing" : ""}`}
                     title={`${tile.name}${price ? ` · ${fmt(price)}` : ""}${owner ? ` · Owned by ${owner.name}` : ""}`}
                     style={
@@ -943,7 +1017,13 @@ export default function App() {
                     }
                     key={`${tile.id}-${i}`}
                     onClick={() => {
-                      if (game.phase === "decision" || game.phase === "power") return;
+                      if (game.phase === "decision") return;
+                      if (game.phase === "power") {
+                        if (powerEligible.has(tile.id)) setSelected(tile.id);
+                        else if (propertyLike(tile))
+                          notify("That property is not eligible for this Super Power step.");
+                        return;
+                      }
                       setSelected(tile.id);
                     }}
                   >
@@ -982,6 +1062,13 @@ export default function App() {
                         style={{ background: owner.avatar }}
                       />
                     )}
+                    {owner && (
+                      <span
+                        className="tile-owner-strip"
+                        aria-hidden="true"
+                        style={{ background: owner.avatar }}
+                      />
+                    )}
                     {tokenPlayers.length > 0 && (
                       <span className="token-stack">
                         {tokenPlayers.map((p) => (
@@ -998,10 +1085,16 @@ export default function App() {
                   </button>
                 );
               })}
+              {powerFlash?.kind === "bomb" && (
+                <MissileOverlay event={powerFlash} gridRef={boardGridRef} />
+              )}
               <BoardCenter
                 game={game}
                 player={player}
                 isMyTurn={isMyTurn}
+                viewerId={selfPlayerId}
+                focusTile={powerFocusTile}
+                flash={powerFlash}
                 pendingTile={pendingTile}
                 displayTile={displayTile ?? null}
                 tileOwner={tileOwner}
@@ -1019,8 +1112,12 @@ export default function App() {
                 onBuy={() => applyCommand("BUY_PROPERTY")}
                 onPass={() => applyCommand("PASS_PROPERTY")}
                 onBuild={doBuild}
-                onChoosePower={(powerId) => applyCommand("CHOOSE_POWER", powerId)}
-                onPassPower={() => applyCommand("PASS_POWER")}
+                onChoosePower={(powerId) => sendPower({ type: "CHOOSE_POWER", powerId })}
+                onPassPower={() => sendPower({ type: "POWER_CANCEL" })}
+                onPowerSelect={(propertyId) => sendPower({ type: "POWER_SELECT", propertyId })}
+                onPowerConfirm={() => sendPower({ type: "POWER_CONFIRM" })}
+                onPowerDecline={() => sendPower({ type: "POWER_DECLINE" })}
+                onPowerCancel={() => sendPower({ type: "POWER_CANCEL" })}
                 onCloseTile={() => setSelected(null)}
               />
             </div>
@@ -1137,7 +1234,7 @@ export default function App() {
                       <div className="player-clock">
                         <i
                           style={{
-                            width: `${(secondsLeft / (game.phase === "power" ? RULES.timing.powerSeconds : game.phase === "decision" ? RULES.timing.propertySeconds : RULES.timing.turnSeconds)) * 100}%`,
+                            width: `${Math.min(100, (secondsLeft / (game.phase === "power" ? (game.powerInteraction?.kind === "auction" ? RULES.timing.auctionSeconds : game.powerInteraction?.kind === null || !game.powerInteraction ? RULES.timing.powerSeconds : RULES.timing.powerActionSeconds) : game.phase === "decision" ? RULES.timing.propertySeconds : RULES.timing.turnSeconds)) * 100)}%`,
                           }}
                         />
                         <small>{timerText}</small>

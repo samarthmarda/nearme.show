@@ -42,7 +42,21 @@ export const RULES = {
   startingCashByOrder: [1000, 1050, 1100, 1150, 1200, 1250],
   salary: 300,
   victory: { targetNetWorth: 5000, roundLimit: 30 },
-  timing: { turnSeconds: 30, propertySeconds: 15, powerSeconds: 20, exchangeSeconds: 60 },
+  timing: {
+    turnSeconds: 30,
+    propertySeconds: 15,
+    /** Super Power choice page (four powers + CANCEL). */
+    powerSeconds: 20,
+    /** Bomb / Power Swap selection steps. */
+    powerActionSeconds: 30,
+    /** Whole Auction interaction, from initiation until trade, cancel or expiry. */
+    auctionSeconds: 69,
+  },
+  powers: {
+    rentFreeCircuits: 3,
+    bombRoundingStep: 5,
+    bombMinimumRent: 1,
+  },
   property: {
     developmentSellRate: 0.5,
     conditionLevels: [1, 0.75, 0.5, 0.25] as const,
@@ -461,35 +475,28 @@ export const POWER_OPTIONS = [
     name: "BOMB",
     icon: "✹",
     color: "#f17858",
-    description: "Damage up to two rival properties. Their rent takes a hit.",
+    description: "Halve one rival property's rent. Ownership does not change.",
   },
   {
-    id: "controlled-roll",
-    name: "CONTROLLED ROLL",
-    icon: "⚄",
+    id: "power-swap",
+    name: "POWER SWAP",
+    icon: "⇄",
     color: "#56a9d1",
-    description: "Choose a precise 1–6 roll before your next move.",
-  },
-  {
-    id: "hotel-pass",
-    name: "FREE HOTEL PASS",
-    icon: "▣",
-    color: "#a18bd2",
-    description: "Waive the cash cost of one eligible final upgrade.",
-  },
-  {
-    id: "jail-pass",
-    name: "JAIL FREE PASS",
-    icon: "↗",
-    color: "#62ae78",
-    description: "Keep in your pocket. Use it to walk out of Jail.",
+    description: "Force a swap: one rival property for one of yours.",
   },
   {
     id: "auction",
-    name: "PROPERTY EXCHANGE",
-    icon: "⇄",
+    name: "AUCTION",
+    icon: "◎",
     color: "#d7ac44",
-    description: "Open a timed property-for-property exchange.",
+    description: "Offer one of yours. A rival's offer can be swapped for it; both earn $100.",
+  },
+  {
+    id: "rent-free",
+    name: "RENT FREE ROUND",
+    icon: "✦",
+    color: "#62ae78",
+    description: "Rent and property charges are blocked for three circuits.",
   },
 ] as const;
 
