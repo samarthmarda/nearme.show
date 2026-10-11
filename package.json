@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/game/engine.test.ts",
+    "test": "tsx --test src/game/engine.test.ts src/components/game/BoardCenter.test.tsx",
     "simulate": "tsx src/game/simulate.ts",
     "start": "NODE_ENV=production node dist/server.mjs",
     "build:client": "vite build",

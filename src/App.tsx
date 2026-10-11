@@ -7,10 +7,12 @@ import {
 } from "react";
 import { io, type Socket } from "socket.io-client";
 import { AuthView } from "./AuthView";
+import { BoardCenter } from "./components/game/BoardCenter";
+import { ChatMessageList, type ChatMessageView } from "./components/game/ChatMessageList";
 import {
+  ArrowLeft,
   ArrowUpRight,
   Bell,
-  Building2,
   ChevronDown,
   CircleHelp,
   Crown,
@@ -72,15 +74,17 @@ export default function App() {
   const [game, setGame] = useState<GameState>(initial),
     [notice, setNotice] = useState(""),
     [chat, setChat] = useState(""),
-    [messages, setMessages] = useState<string[]>([]),
+    [messages, setMessages] = useState<ChatMessageView[]>([]),
     [selected, setSelected] = useState<string | null>(null),
     [showLobby, setShowLobby] = useState(false),
-    [modalDismissed, setModalDismissed] = useState(false),
+    [centerEvent, setCenterEvent] = useState(initial.message),
     [secondsLeft, setSecondsLeft] = useState(RULES.timing.turnSeconds),
     [rolling, setRolling] = useState(false),
     [motionActive, setMotionActive] = useState(false),
     [motionPosition, setMotionPosition] = useState<Record<string, number>>({});
   const suppressState = useRef(false);
+  const activeRoomCode = useRef<string | null>(null);
+  const activeRoomStarted = useRef(false);
   useEffect(() => {
     let mounted = true;
     fetch("/api/auth/me", { credentials: "include" })
@@ -100,7 +104,15 @@ export default function App() {
     const live = io({ withCredentials: true });
     setSocket(live);
     live.on("room:update", (room: RoomView) => {
+      if (activeRoomCode.current !== room.code) {
+        activeRoomCode.current = room.code;
+        activeRoomStarted.current = false;
+        setMessages([]);
+      }
+      const enteringGame = !activeRoomStarted.current && Boolean(room.game);
+      activeRoomStarted.current = Boolean(room.game);
       setRoomInfo(room);
+      if (enteringGame && room.game) setGame(room.game);
     });
     live.on("game:state", (state: GameState) => {
       if (suppressState.current) {
@@ -108,17 +120,29 @@ export default function App() {
         return;
       }
       setGame(state);
-      if (state.phase === "decision") {
+      if (state.phase === "decision" || state.phase === "power") {
         setSelected(null);
-        setModalDismissed(false);
       }
     });
     live.on("presence:update", (ids: string[]) => setOnlineIds(ids));
     live.on("friends:update", (list: FriendView[]) => setFriends(list));
-    live.on("chat:message", (message: { username: string; text: string }) =>
-      setMessages((list) =>
-        [...list, `${message.username}: ${message.text}`].slice(-30),
-      ),
+    live.on(
+      "chat:message",
+      (message: { username: string; text: string; timestamp?: string }) => {
+        const timestamp = message.timestamp ?? new Date().toISOString();
+        setMessages((list) =>
+          [
+            ...list,
+            {
+              id: crypto.randomUUID(),
+              username: message.username,
+              text: message.text,
+              timestamp,
+              fromSelf: message.username === authUser.displayName,
+            },
+          ].slice(-80),
+        );
+      },
     );
     live.on("game:invite", (invite: { from: string; roomCode: string }) => {
       setPendingInvite(invite);
@@ -136,21 +160,21 @@ export default function App() {
   }, [authUser]);
   const player = currentPlayer(game);
   const players = game.players;
-  const pendingTile = game.phase === "decision" ? tileAt(player.position) : null;
-  const selectedTile = BOARD.find((tile) => tile.id === selected);
-  const displayTile = pendingTile ?? selectedTile;
-  const lastLandingTile = game.lastLanding
-    ? BOARD.find((tile) => tile.id === game.lastLanding?.tileId)
-    : undefined;
-  const lastLandingPlayer = game.lastLanding
-    ? players.find((candidate) => candidate.id === game.lastLanding?.playerId)
-    : undefined;
-  const shownRoll = game.lastRoll ?? game.lastLanding?.roll ?? null;
   const selfPlayerId =
     roomInfo?.started && authUser
       ? `p${roomInfo.members.findIndex((member) => member.id === authUser.id)}`
       : "p0";
   const isMyTurn = player.id === selfPlayerId;
+  const pendingTile = game.phase === "decision" ? tileAt(player.position) : null;
+  const selectedTile = BOARD.find((tile) => tile.id === selected);
+  // A pending property card is private to the player who must resolve it.
+  // Spectators retain the shared board and receive a neutral wait state.
+  const displayTile =
+    game.phase === "decision"
+      ? isMyTurn
+        ? pendingTile
+        : undefined
+      : selectedTile;
   const tileOwner = displayTile
     ? players.find((candidate) => candidate.id === game.owners[displayTile.id])
     : undefined;
@@ -167,13 +191,6 @@ export default function App() {
       : (displayTile.rent ?? 0)
     : 0;
   const developmentLevel = displayTile ? (game.buildings[displayTile.id] ?? 0) : 0;
-  const isPendingPurchase = Boolean(
-    game.phase === "decision" &&
-      pendingTile &&
-      displayTile?.id === pendingTile.id &&
-      !game.owners[pendingTile.id] &&
-      pendingTile.price,
-  );
   const canDevelop = Boolean(
     displayTile?.kind === "city" &&
       displayTile.group &&
@@ -357,6 +374,15 @@ export default function App() {
     setRoomInfo(null);
   };
   useEffect(() => {
+    if (["decision", "power", "finished"].includes(game.phase)) {
+      setCenterEvent("");
+      return;
+    }
+    setCenterEvent(game.message);
+    const timer = window.setTimeout(() => setCenterEvent(""), 3800);
+    return () => window.clearTimeout(timer);
+  }, [game.message, game.phase]);
+  useEffect(() => {
     if (!roomInfo?.started || !roomInfo.turnDeadline) return;
     const update = () =>
       setSecondsLeft(
@@ -401,7 +427,6 @@ export default function App() {
       !isMyTurn
     )
       return;
-    setModalDismissed(false);
     setSelected(null);
     setRolling(true);
     const before = player.position;
@@ -432,37 +457,6 @@ export default function App() {
       ),
     [player.properties],
   );
-  const centerAction =
-    game.phase === "roll" ? (
-      isMyTurn ? (
-        <button
-          className={`roll-button ${rolling ? "rolling-dice" : ""}`}
-          disabled={rolling || motionActive}
-          onClick={doRoll}
-        >
-          <Dices size={20} />{" "}
-          {rolling ? "ROLLING…" : game.lastRoll === 6 ? "ROLL AGAIN" : "ROLL DICE"}
-        </button>
-      ) : (
-        <button className="roll-button waiting" disabled>
-          WAITING FOR {player.name.toUpperCase()}
-        </button>
-      )
-    ) : game.phase === "power" ? (
-      <button className="roll-button waiting" disabled>
-        {isMyTurn
-          ? "CHOOSE A POWER ABOVE"
-          : `${player.name.toUpperCase()} IS PICKING A POWER`}
-      </button>
-    ) : game.phase === "decision" ? (
-      <div className="center-action-hint" aria-live="polite">
-        {isMyTurn ? "BUY OR PASS IN THE PROPERTY CARD" : `${player.name.toUpperCase()} IS CHOOSING`}
-      </div>
-    ) : (
-      <button className="roll-button waiting" disabled>
-        <Crown size={17} /> GAME COMPLETE
-      </button>
-    );
   if (!authUser) return <AuthView onAuthed={(user) => setAuthUser(user)} />;
   if (!roomInfo?.started || !roomInfo.game)
     return (
@@ -769,6 +763,14 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
+        <button
+          className="game-back"
+          type="button"
+          aria-label="Open room and friends"
+          onClick={() => setShowLobby(true)}
+        >
+          <ArrowLeft size={20} />
+        </button>
         <div className="brand">
           <div className="brand-mark">
             S<span>✦</span>
@@ -941,27 +943,27 @@ export default function App() {
                     }
                     key={`${tile.id}-${i}`}
                     onClick={() => {
+                      if (game.phase === "decision" || game.phase === "power") return;
                       setSelected(tile.id);
-                      setModalDismissed(false);
                     }}
                   >
                     <span className="tile-color" />
                     {tile.kind === "start" ? (
-                      <span className="tile-icon start-icon">↗</span>
+                      <span className="tile-icon start-icon">⬆️</span>
                     ) : (
                       <span className="tile-icon">
                         {tile.kind === "bank"
-                          ? "＄"
+                          ? "🏦"
                           : tile.kind === "power"
-                            ? "✦"
+                            ? "✨"
                             : tile.kind === "jail"
-                              ? "▣"
+                              ? "🚔"
                               : tile.kind === "transport"
-                                ? "↗"
+                                ? "🚆"
                                 : tile.kind === "business"
-                                  ? "⌂"
+                                  ? "🏢"
                                   : tile.kind === "tax"
-                                    ? "%"
+                                    ? "🧾"
                                     : ""}
                       </span>
                     )}
@@ -996,62 +998,31 @@ export default function App() {
                   </button>
                 );
               })}
-              <div className={`board-center board-center-${game.phase}`}>
-                <div className="center-topline">
-                  <span>✦ LIVE CITY · ROUND {game.round}</span>
-                  <span className="center-round">{player.name.toUpperCase()} TO ACT</span>
-                </div>
-                <div className="center-art" aria-hidden="true">
-                  <div className="sun-disc" />
-                  <div className="hill hill-back" />
-                  <div className="hill hill-front" />
-                  <div className="center-tower">✦</div>
-                </div>
-                <div className="center-title">
-                  SCAM CITY <span>·</span> AFTER DARK
-                </div>
-                <div className="center-sub">
-                  1–5 auto-passes after resolution · 6 earns another roll
-                </div>
-                <div className="center-notice" role="status" aria-live="polite">
-                  <span className="center-notice-kicker">
-                    {game.phase === "decision"
-                      ? "PROPERTY ACTION REQUIRED"
-                      : game.phase === "power"
-                        ? "POWER PICK"
-                        : game.phase === "finished"
-                          ? "MATCH COMPLETE"
-                          : game.lastRoll === 6
-                            ? "SIX · BONUS ROLL"
-                            : "TABLE UPDATE"}
-                  </span>
-                  <strong>{game.message}</strong>
-                  {game.phase === "roll" && game.activity[1] && (
-                    <small>Last resolution · {game.activity[1]}</small>
-                  )}
-                  {game.lastLandingTile && (
-                    <span className="center-landing-chip">
-                      {lastLandingPlayer?.name} · {lastLandingTile.name}
-                    </span>
-                  )}
-                </div>
-                <div className="roll-result">
-                  <span className={`dice-face ${shownRoll ? "" : "idle"}`}>
-                    {shownRoll ?? "⚄"}
-                  </span>
-                  <span>
-                    <small>{game.lastRoll === 6 ? "EXTRA ROLL READY" : shownRoll ? "LAST ROLL" : "TURN FLOW"}</small>
-                    <b>
-                      {game.phase === "decision"
-                        ? "Choose BUY or PASS"
-                        : game.phase === "roll" && game.lastRoll === 6
-                          ? "Same player rolls again"
-                          : `Next · ${player.name}`}
-                    </b>
-                  </span>
-                </div>
-                {centerAction}
-              </div>
+              <BoardCenter
+                game={game}
+                player={player}
+                isMyTurn={isMyTurn}
+                pendingTile={pendingTile}
+                displayTile={displayTile ?? null}
+                tileOwner={tileOwner}
+                ownedInGroup={ownedInGroup}
+                groupSize={groupMembers.length}
+                activeRent={activeRent}
+                developmentLevel={developmentLevel}
+                canDevelop={canDevelop}
+                canAffordDevelopment={canAffordDevelopment}
+                timerText={timerText}
+                eventText={centerEvent}
+                rolling={rolling}
+                motionActive={motionActive}
+                onRoll={doRoll}
+                onBuy={() => applyCommand("BUY_PROPERTY")}
+                onPass={() => applyCommand("PASS_PROPERTY")}
+                onBuild={doBuild}
+                onChoosePower={(powerId) => applyCommand("CHOOSE_POWER", powerId)}
+                onPassPower={() => applyCommand("PASS_POWER")}
+                onCloseTile={() => setSelected(null)}
+              />
             </div>
           </div>
           <div className="mobile-player-rail rail-bottom">
@@ -1081,6 +1052,17 @@ export default function App() {
                 )}
               </div>
             ))}
+            {players.length < 6 && (
+              <button
+                className="mobile-seat-add"
+                type="button"
+                aria-label="Invite another player"
+                onClick={() => setShowLobby(true)}
+              >
+                <Plus size={20} />
+                <span>ADD</span>
+              </button>
+            )}
           </div>
           <div className="board-foot">
             <span>
@@ -1233,15 +1215,7 @@ export default function App() {
               </div>
               <button className="text-btn">VIEW ALL</button>
             </div>
-            <div className="chat-lines">
-              {messages.length ? (
-                messages.map((m, i) => <p key={i}>{m}</p>)
-              ) : (
-                <p className="chat-empty">
-                  No messages yet. Say hello to the real players at your table.
-                </p>
-              )}
-            </div>
+            <ChatMessageList messages={messages} />
             <form
               className="chat-compose"
               onSubmit={(e) => {
@@ -1262,6 +1236,8 @@ export default function App() {
                 value={chat}
                 onChange={(e) => setChat(e.target.value)}
                 placeholder="Say something nice…"
+                aria-label="Message your table"
+                enterKeyHint="send"
               />
               <button aria-label="Send message">
                 <ArrowUpRight size={17} />
@@ -1283,57 +1259,8 @@ export default function App() {
           </section>
         </aside>
       </div>
-      <footer className="bottom-bar">
-        <div className="turn-player">
-          <span className="mini-you">
-            <i
-              className="player-dot"
-              style={{ "--player-color": player.avatar } as CSSProperties}
-              aria-hidden="true"
-            >
-              {player.name.slice(0, 1).toUpperCase()}
-            </i>
-          </span>
-          <span>
-            <b>{player.name}'s move</b>
-            <small>
-              {game.phase === "roll"
-                ? game.lastRoll === 6
-                  ? "Six rolled · your bonus roll is ready"
-                  : "Roll 1–5 passes automatically · 6 rolls again"
-                : game.phase === "decision"
-                  ? "Resolve the property choice to continue"
-                  : game.phase === "power"
-                    ? "Power choice resolves before the next roll"
-                    : "Final standings"}
-            </small>
-          </span>
-        </div>
-        <div className="bottom-middle">
-          <span className="key-hint">SPACE</span> roll{" "}
-          <i /> 1–5 auto-pass · 6 roll again
-        </div>
-        {game.phase === "roll" ? (
-          <button
-            className="bottom-action"
-            disabled={!isMyTurn || rolling || motionActive}
-            onClick={doRoll}
-          >
-            <Dices size={18} />{" "}
-            {isMyTurn ? (game.lastRoll === 6 ? "ROLL AGAIN" : "ROLL") : "WAIT"}
-          </button>
-        ) : (
-          <div className="bottom-action bottom-action-status" role="status">
-            {game.phase === "decision"
-              ? isMyTurn
-                ? "BUY OR PASS"
-                : "PROPERTY CHOICE"
-              : game.phase === "power"
-                ? "PICK A POWER"
-                : "GAME COMPLETE"}
-          </div>
-        )}
-      </footer>
+      <div className="mobile-chat-dock" role="region" aria-label="Game chat">
+        <ChatMessageList messages={messages} />
       <form
         className="mobile-chat-bar"
         onSubmit={(e) => {
@@ -1354,29 +1281,14 @@ export default function App() {
           value={chat}
           onChange={(e) => setChat(e.target.value)}
           placeholder="Say hello to your table…"
+          aria-label="Message your table"
+          enterKeyHint="send"
         />
         <button aria-label="Send chat message">
           <ArrowUpRight size={19} />
         </button>
       </form>
-      {roomInfo?.started && game.phase !== "finished" && (
-        <button
-          className="room-code-dock live-code-dock"
-          onClick={() => void copyRoomCode()}
-          aria-label={`Copy live game join code ${roomInfo.code}`}
-        >
-          <span>LIVE GAME · JOIN BY CODE</span>
-          <b>{roomInfo.code}</b>
-          <small>
-            {roomInfo.members.length >= 6
-              ? "TABLE FULL · 6/6"
-              : "OPEN WHILE A SEAT REMAINS"}
-          </small>
-          <i>
-            <ArrowUpRight size={15} />
-          </i>
-        </button>
-      )}
+      </div>
       {notice && (
         <div
           className={`toast ${/rent|paid|collected|cash/i.test(notice) ? "toast-money" : ""}`}
@@ -1385,250 +1297,6 @@ export default function App() {
         >
           <Sparkles size={16} />
           <span>{notice}</span>
-        </div>
-      )}
-      {displayTile && !modalDismissed && (
-        <div
-          className="modal-scrim property-scrim"
-          onClick={() => {
-            if (!isPendingPurchase || !isMyTurn) {
-              setModalDismissed(true);
-              setSelected(null);
-            }
-          }}
-        >
-          <div className="property-sheet" onClick={(e) => e.stopPropagation()}>
-            {(!isPendingPurchase || !isMyTurn) && (
-              <button
-                className="close-sheet"
-                aria-label="Close property details"
-                onClick={() => {
-                  setModalDismissed(true);
-                  setSelected(null);
-                }}
-              >
-                <X size={18} />
-              </button>
-            )}
-            <div
-              className="sheet-band"
-              style={{ background: displayTile.tone || "#a6ba8c" }}
-            />
-            <div className="eyebrow">
-              {displayTile.group || displayTile.kind} · SCAM CITY
-            </div>
-            <h2>{displayTile.name}</h2>
-            <div className="property-owner-line">
-              <i
-                className={tileOwner ? "owner-status-dot" : "owner-status-dot unowned"}
-                style={tileOwner ? { "--owner-color": tileOwner.avatar } as CSSProperties : undefined}
-              />
-              <span>{tileOwner ? `OWNED BY ${tileOwner.name.toUpperCase()}` : displayTile.price ? "AVAILABLE TO BUY" : displayTile.kind.toUpperCase()}</span>
-              {lastLandingTile?.id === displayTile.id && <b>JUST LANDED</b>}
-            </div>
-            <div className="sheet-stats">
-              <div>
-                <small>VALUE</small>
-                <b>{displayTile.price !== undefined ? fmt(displayTile.price) : "—"}</b>
-              </div>
-              <div className="sheet-rent-stat">
-                <small>{tileOwner ? "CURRENT RENT" : "BASE RENT"}</small>
-                <b>{fmt(activeRent)}</b>
-              </div>
-              <div>
-                <small>SELL PRICE</small>
-                <b>{displayTile.sellValue !== undefined ? fmt(displayTile.sellValue) : "—"}</b>
-              </div>
-            </div>
-            {(displayTile.mortgageValue !== undefined || displayTile.unmortgageCost !== undefined) && (
-              <div className="property-finance-row">
-                {displayTile.mortgageValue !== undefined && (
-                  <span>MORTGAGE VALUE <b>{fmt(displayTile.mortgageValue)}</b></span>
-                )}
-                {displayTile.unmortgageCost !== undefined && (
-                  <span>REDEEM COST <b>{fmt(displayTile.unmortgageCost)}</b></span>
-                )}
-              </div>
-            )}
-            {displayTile.kind === "tax" && (
-              <div className="property-fee-note">
-                Landing fee <strong>{fmt(displayTile.taxAmount ?? 0)}</strong> · paid to the bank
-              </div>
-            )}
-            {displayTile.rentSchedule && (
-              <div className="rent-ladder">
-                <div className="ladder-title">
-                  RENT SCHEDULE
-                  <span>{displayTile.group ? `GROUP ${displayTile.group.toUpperCase()}` : "PROPERTY"}</span>
-                </div>
-                <div className="rent-steps">
-                  {[
-                    { label: displayTile.kind === "city" ? "SOLO" : "1 OWNED", value: displayTile.rentSchedule.one },
-                    { label: displayTile.kind === "city" ? "2 SAME COLOUR" : "2 OWNED", value: displayTile.rentSchedule.two },
-                    { label: displayTile.kind === "city" ? "FULL GROUP" : "3 OWNED", value: displayTile.rentSchedule.three },
-                  ].map((step, index) => (
-                    <div className="rent-step" key={step.label}>
-                      <small>{step.label}</small>
-                      <b>{fmt(step.value)}</b>
-                      {index === ownedInGroup - 1 && tileOwner && <i>NOW</i>}
-                    </div>
-                  ))}
-                </div>
-                {displayTile.kind === "city" && displayTile.rentSchedule.development && (
-                  <>
-                    <div className="development-track">
-                      {displayTile.rentSchedule.development.map((rent, index) => (
-                        <div
-                          className={`development-level ${developmentLevel === index + 1 && tileOwner?.id === groupOwnerId ? "development-current" : ""}`}
-                          key={index}
-                        >
-                          <span className="development-illustration" aria-hidden="true">
-                            <Building2 size={15 + index * 3} strokeWidth={1.7} />
-                            {index > 1 && <Building2 size={13} strokeWidth={1.7} />}
-                          </span>
-                          <small>{["HOTEL 1", "HOTEL 2", "HOTEL 3", "TOWER"][index]}</small>
-                          <b>{fmt(rent)}</b>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="development-cost-row">
-                      <span>BUILD COST</span>
-                      <b>{fmt(displayTile.developmentCost ?? 0)} / level</b>
-                      {displayTile.repairCost !== undefined && (
-                        <>
-                          <i />
-                          <span>REPAIR</span>
-                          <b>{fmt(displayTile.repairCost)}</b>
-                        </>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            {displayTile.group && (
-              <div className="group-progress">
-                <Sparkles size={13} />
-                {ownedInGroup === groupMembers.length
-                  ? displayTile.kind === "city"
-                    ? `${tileOwner?.name ?? "YOUR"} GROUP COMPLETE · DEVELOPMENT UNLOCKED`
-                    : `${tileOwner?.name ?? "YOUR"} GROUP COMPLETE · MAX GROUP RENT`
-                  : `${tileOwner?.name ?? "YOUR"} GROUP · ${ownedInGroup}/${groupMembers.length} OWNED`}
-              </div>
-            )}
-            <div className="sheet-copy">
-              {tileOwner
-                ? `Owned by ${tileOwner.name} · rent is ${fmt(activeRent)} at this ownership level.`
-                : isPendingPurchase
-                  ? `Available for ${fmt(displayTile.price ?? 0)}. Buy or pass to resolve this landing.`
-                  : displayTile.kind === "tax"
-                    ? `Landing here costs ${fmt(displayTile.taxAmount ?? 0)}.`
-                    : "Open property · matching group tiles are highlighted on the board."}
-            </div>
-            {canDevelop && displayTile && (
-              <>
-                <button
-                  className={`sheet-primary ${canAffordDevelopment ? "" : "disabled-buy"}`}
-                  disabled={!canAffordDevelopment}
-                  onClick={() => doBuild(displayTile.id)}
-                >
-                  BUILD {["HOTEL 1", "HOTEL 2", "HOTEL 3", "TOWER"][developmentLevel]} · {fmt(displayTile.developmentCost ?? 0)}
-                </button>
-                {!canAffordDevelopment && (
-                  <div className="insufficient">Not enough cash for this development.</div>
-                )}
-              </>
-            )}
-            {isPendingPurchase && isMyTurn && displayTile.price !== undefined && (
-              <div className="property-actions">
-                <button
-                  className={`sheet-primary ${player.cash < displayTile.price ? "disabled-buy" : ""}`}
-                  disabled={player.cash < displayTile.price}
-                  onClick={() => {
-                    applyCommand("BUY_PROPERTY");
-                    setModalDismissed(true);
-                    setSelected(null);
-                  }}
-                >
-                  BUY PROPERTY · {fmt(displayTile.price)}
-                </button>
-                {player.cash < displayTile.price && (
-                  <div className="insufficient">Not enough cash · pass to finish the landing.</div>
-                )}
-                <button
-                  className="sheet-secondary"
-                  onClick={() => {
-                    applyCommand("PASS_PROPERTY");
-                    setModalDismissed(true);
-                    setSelected(null);
-                  }}
-                >
-                  PASS PROPERTY
-                </button>
-              </div>
-            )}
-            {displayTile.kind === "city" && tileOwner?.id === player.id && developmentLevel === 4 && (
-              <div className="group-progress">TOWER COMPLETE · MAX DEVELOPMENT</div>
-            )}
-            {(!isPendingPurchase || !isMyTurn) && (
-              <button
-                className="sheet-secondary"
-                onClick={() => {
-                  setModalDismissed(true);
-                  setSelected(null);
-                }}
-              >
-                CLOSE DETAILS
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-      {game.phase === "power" && (
-        <div className="modal-scrim power-scrim">
-          <section className="power-sheet">
-            <div className="power-kicker">
-              <span className="power-spark">✦</span> SCAM CITY · POWER STOP{" "}
-              <span className="power-countdown">{timerText}</span>
-            </div>
-            <h2>
-              Pick your <em>edge.</em>
-            </h2>
-            <p>
-              {isMyTurn
-                ? "Choose one power to add to your kit. The other players are watching."
-                : `${player.name} landed on the Power stop. Waiting on their pick…`}
-            </p>
-            <div className="power-options">
-              {POWER_OPTIONS.map((power, index) => (
-                <button
-                  className="power-option"
-                  key={power.id}
-                  disabled={!isMyTurn}
-                  onClick={() => applyCommand("CHOOSE_POWER", power.id)}
-                  style={{ "--power-color": power.color } as CSSProperties}
-                >
-                  <span className="power-option-icon">{power.icon}</span>
-                  <span className="power-option-copy">
-                    <b>{power.name}</b>
-                    <small>{power.description}</small>
-                  </span>
-                  <span className="power-option-number">0{index + 1}</span>
-                </button>
-              ))}
-            </div>
-            {isMyTurn && (
-              <button
-                className="power-skip"
-                onClick={() => applyCommand("PASS_POWER")}
-              >
-                SKIP THIS POWER <ArrowUpRight size={15} />
-              </button>
-            )}
-            <div className="power-help">
-              ONE POWER PER VISIT <i /> CHOICE LOCKS WHEN SELECTED
-            </div>
-          </section>
         </div>
       )}
       {showLobby && (
