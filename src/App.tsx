@@ -8,6 +8,7 @@ import {
 import { io, type Socket } from "socket.io-client";
 import { AuthView } from "./AuthView";
 import { BoardCenter } from "./components/game/BoardCenter";
+import { tileStrip } from "./components/game/tileStrip";
 import { MissileOverlay } from "./components/game/PowerEffects";
 import { ChatMessageList, type ChatMessageView } from "./components/game/ChatMessageList";
 import {
@@ -30,8 +31,11 @@ import { BOARD, POWER_OPTIONS, RULES, type PowerId, type Tile } from "./game/rul
 import {
   createGame,
   currentPlayer,
+  currentRent,
   netWorth,
   powerEligibleIds,
+  sellableIds,
+  sellBlockReason,
   powerSelectedIds,
   rentFor,
   tileAt,
@@ -284,6 +288,10 @@ export default function App() {
       },
     );
   };
+  // Sell is a server-validated command. The button is shown only when the
+  // server-side rules allow it; the ack state is applied as with other commands.
+  const sendSell = (propertyId: string) =>
+    sendPower({ type: "SELL_PROPERTY", propertyId });
   const applyCommand = (type: string, propertyId?: string) => {
     if (!roomInfo?.started || !socket) {
       notify("Create or join a real player table before making a move.");
@@ -1003,10 +1011,15 @@ export default function App() {
                 );
                 const pos = tilePos(i);
                 const price = tile.price;
+                const strip = tileStrip(
+                  tile,
+                  owner?.id,
+                  owner ? currentRent(game, tile.id) : 0,
+                );
                 return (
                   <button
                     data-tile-id={tile.id}
-                    className={`tile tile-${tile.kind} ${selected === tile.id ? "tile-selected" : ""} ${game.lastLanding?.tileId === tile.id ? "tile-landed" : ""} ${owner ? "tile-owned" : ""} ${displayTile?.group && displayTile.group === tile.group ? "tile-group-highlight" : ""} ${tokenPlayers.length ? "has-token" : ""} ${powerEligible.has(tile.id) ? "tile-power-eligible" : ""} ${powerSelected.has(tile.id) ? "tile-power-selected" : ""}`}
+                    className={`tile tile-${tile.kind} ${strip ? "has-value-strip" : ""} ${selected === tile.id ? "tile-selected" : ""} ${game.lastLanding?.tileId === tile.id ? "tile-landed" : ""} ${owner ? "tile-owned" : ""} ${displayTile?.group && displayTile.group === tile.group ? "tile-group-highlight" : ""} ${tokenPlayers.length ? "has-token" : ""} ${powerEligible.has(tile.id) ? "tile-power-eligible" : ""} ${powerSelected.has(tile.id) ? "tile-power-selected" : ""}`}
                     aria-label={`${tile.name}${price ? `, value ${fmt(price)}` : ""}${owner ? `, owned by ${owner.name}` : ""}${game.lastLanding?.tileId === tile.id ? ", last landing" : ""}`}
                     title={`${tile.name}${price ? ` · ${fmt(price)}` : ""}${owner ? ` · Owned by ${owner.name}` : ""}`}
                     style={
@@ -1048,7 +1061,19 @@ export default function App() {
                       </span>
                     )}
                     <span className="tile-name">{tile.name}</span>
-                    {price && <span className="tile-price">{fmt(price)}</span>}
+                    {strip && (
+                      <span
+                        className={`tile-value-strip ${strip.mode === "rent" ? "is-owned" : "is-price"}`}
+                        style={
+                          strip.mode === "rent"
+                            ? { background: owner?.avatar }
+                            : undefined
+                        }
+                        data-strip={strip.mode}
+                      >
+                        {fmt(strip.amount)}
+                      </span>
+                    )}
                     {game.buildings[tile.id] ? (
                       <span className="tile-level">
                         {game.buildings[tile.id] === 4
@@ -1056,19 +1081,6 @@ export default function App() {
                           : `H${game.buildings[tile.id]}`}
                       </span>
                     ) : null}
-                    {owner && (
-                      <span
-                        className="owner-dot"
-                        style={{ background: owner.avatar }}
-                      />
-                    )}
-                    {owner && (
-                      <span
-                        className="tile-owner-strip"
-                        aria-hidden="true"
-                        style={{ background: owner.avatar }}
-                      />
-                    )}
                     {tokenPlayers.length > 0 && (
                       <span className="token-stack">
                         {tokenPlayers.map((p) => (
@@ -1118,6 +1130,10 @@ export default function App() {
                 onPowerConfirm={() => sendPower({ type: "POWER_CONFIRM" })}
                 onPowerDecline={() => sendPower({ type: "POWER_DECLINE" })}
                 onPowerCancel={() => sendPower({ type: "POWER_CANCEL" })}
+                sellReason={(propertyId) =>
+                  sellBlockReason(game, selfPlayerId, propertyId)
+                }
+                onSell={sendSell}
                 onCloseTile={() => setSelected(null)}
               />
             </div>

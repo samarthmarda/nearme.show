@@ -148,6 +148,7 @@ export type GameCommand =
   | { type: "BUY_PROPERTY" }
   | { type: "PASS_PROPERTY" }
   | { type: "BUILD"; propertyId: string }
+  | { type: "SELL_PROPERTY"; propertyId: string }
   | { type: "CHOOSE_POWER"; powerId: string; interactionId?: number }
   | { type: "PASS_POWER"; interactionId?: number }
   | Exclude<PowerCommand, { type: "CHOOSE_POWER" }>;
@@ -1182,6 +1183,70 @@ export function skipPower(state: GameState, actorId: string = currentPlayer(stat
  * Single authoritative dispatch for every game command. The server calls this
  * with the seat-derived actor id; nothing from the client decides who acts.
  */
+/* ------------------------------------------------------------------------- */
+/* Selling a property to the Bank                                             */
+
+/**
+ * Why `actorId` cannot sell `propertyId` right now, or null when they can.
+ * Sale is the owner's action on their own turn, before rolling. It pays the
+ * tile's sell value to the Bank and returns the property to the unowned pool.
+ * A colour set with buildings cannot be broken up: the buildings must come
+ * down first, and building removal is not implemented.
+ */
+export function sellBlockReason(
+  state: GameState,
+  actorId: string,
+  propertyId: string,
+): string | null {
+  const tile = BOARD.find((candidate) => candidate.id === propertyId);
+  if (!tile || tile.price === undefined || tile.sellValue === undefined) {
+    return "This tile cannot be sold.";
+  }
+  if (state.phase !== "roll") {
+    return "You can sell only on your turn, before you roll.";
+  }
+  if (currentPlayer(state)?.id !== actorId) {
+    return "Only the owner can sell, on their own turn.";
+  }
+  if (state.owners[propertyId] !== actorId) {
+    return "You do not own this property.";
+  }
+  const colourSet = tile.group
+    ? BOARD.filter((candidate) => candidate.group === tile.group)
+    : [tile];
+  if (colourSet.some((candidate) => (state.buildings[candidate.id] ?? 0) > 0)) {
+    return "Sell the buildings in this colour set first.";
+  }
+  return null;
+}
+
+/** Property ids `playerId` may sell right now. */
+export function sellableIds(state: GameState, playerId: string): string[] {
+  return BOARD.filter(
+    (tile) => tile.price !== undefined && !sellBlockReason(state, playerId, tile.id),
+  ).map((tile) => tile.id);
+}
+
+export function sellProperty(
+  state: GameState,
+  actorId: string,
+  propertyId: string,
+): CommandResult {
+  const reason = sellBlockReason(state, actorId, propertyId);
+  if (reason) return failure(state, reason);
+  const next = structuredClone(state);
+  const player = playerById(next, actorId)!;
+  const tile = BOARD.find((candidate) => candidate.id === propertyId)!;
+  const price = tile.sellValue ?? 0;
+  player.cash += price;
+  player.properties = player.properties.filter((id) => id !== propertyId);
+  delete next.owners[propertyId];
+  // Cash rises by the sell value and the property leaves the net-worth
+  // total by the same amount, so net worth is unchanged by the sale.
+  addActivity(next, `${player.name} sold ${tile.name} to the Bank for ${formatMoney(price)}.`);
+  return { state: next };
+}
+
 export function applyGameCommand(
   state: GameState,
   actorId: string,
@@ -1189,6 +1254,8 @@ export function applyGameCommand(
   now: number = Date.now(),
 ): CommandResult {
   switch (command?.type) {
+    case "SELL_PROPERTY":
+      return sellProperty(state, actorId, command.propertyId);
     case "ROLL":
     case "BUY_PROPERTY":
     case "PASS_PROPERTY":

@@ -1,4 +1,4 @@
-import { Fragment, type CSSProperties } from "react";
+import { Fragment, useState, type CSSProperties } from "react";
 import {
   ArrowUpRight,
   Building2,
@@ -57,6 +57,10 @@ export type BoardCenterProps = {
   onPowerDecline: () => void;
   onPowerCancel: () => void;
   onCloseTile: () => void;
+  /** Why the viewer cannot sell this property now (null = allowed). Owner-only UI. */
+  sellReason?: (propertyId: string) => string | null;
+  /** Sends a SELL_PROPERTY command. The server validates it and decides the result. */
+  onSell?: (propertyId: string) => void;
 };
 
 function CityHallIllustration() {
@@ -222,6 +226,7 @@ function PropertyCard({
   onPass,
   onBuild,
   onClose,
+  sell,
 }: {
   tile: Tile;
   owner?: Player;
@@ -237,8 +242,11 @@ function PropertyCard({
   onPass: () => void;
   onBuild: (propertyId: string) => void;
   onClose: () => void;
+  sell?: { reason: string | null; onSell: (propertyId: string) => void } | null;
 }) {
+  const [confirmingSale, setConfirmingSale] = useState(false);
   const schedule = tile.rentSchedule;
+  const salePrice = fmt(tile.sellValue ?? 0);
   const levels = RULES.development.levels;
   const canBuy = pending && tile.price !== undefined && player.cash >= tile.price;
   return (
@@ -338,6 +346,43 @@ function PropertyCard({
           )
         ) : (
           <span className="card-inspection-label">{owner ? "PROPERTY DETAILS" : "PUBLIC TILE DETAILS"}</span>
+        )}
+        {sell && !pending && (
+          <div className="sell-row">
+            {sell.reason ? (
+              <>
+                <button type="button" className="property-action sell-action" disabled aria-label={`Sell ${tile.name}, not available`}>
+                  SELL · {salePrice}
+                </button>
+                <span className="sell-blocked">{sell.reason}</span>
+              </>
+            ) : confirmingSale ? (
+              <>
+                <button type="button" className="property-action secondary-action" onClick={() => setConfirmingSale(false)}>
+                  KEEP
+                </button>
+                <button
+                  type="button"
+                  className="property-action sell-action confirm"
+                  onClick={() => {
+                    setConfirmingSale(false);
+                    sell.onSell(tile.id);
+                  }}
+                >
+                  CONFIRM SALE · {salePrice}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="property-action sell-action"
+                aria-label={`Sell ${tile.name} to the Bank for ${salePrice}`}
+                onClick={() => setConfirmingSale(true)}
+              >
+                SELL · {salePrice}
+              </button>
+            )}
+          </div>
         )}
       </footer>
     </article>
@@ -830,6 +875,8 @@ export function BoardCenter(props: BoardCenterProps) {
     onChoosePower,
     onPassPower,
     onCloseTile,
+    sellReason,
+    onSell,
     onPowerSelect,
     onPowerConfirm,
     onPowerDecline,
@@ -903,7 +950,10 @@ export function BoardCenter(props: BoardCenterProps) {
 
   if (game.phase === "roll" && displayTile) {
     return (
-      <div className="board-center board-interaction board-center-inspect">
+      <div
+        className="board-center board-interaction board-center-inspect"
+        key={displayTile.id}
+      >
         {flash && <PowerFlash event={flash} />}
         <RentFreeStrip game={game} />
         <PropertyCard
@@ -921,6 +971,11 @@ export function BoardCenter(props: BoardCenterProps) {
           onPass={onPass}
           onBuild={onBuild}
           onClose={onCloseTile}
+          sell={
+            tileOwner?.id === viewerId && onSell
+              ? { reason: sellReason?.(displayTile.id) ?? null, onSell }
+              : null
+          }
         />
       </div>
     );

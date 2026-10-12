@@ -6,6 +6,7 @@ import { BoardCenter, PowerFlash, RentFreeStrip, type BoardCenterProps } from ".
 import { ChatMessageList } from "./ChatMessageList";
 import { applyGameCommand, createGame, currentPlayer, roll, tileAt, type GameState } from "../../game/engine";
 import { BOARD, type Tile } from "../../game/rules";
+import { sellBlockReason } from "../../game/engine";
 
 function centerProps(
   game: BoardCenterProps["game"],
@@ -226,4 +227,42 @@ test("power flash announces the server result text with a status role", () => {
   const html = renderToStaticMarkup(createElement(PowerFlash, { event: game.powerEvent! }));
   assert.match(html, /role="status"/);
   assert.ok(html.includes(game.powerEvent!.text));
+});
+
+/* Sell button: visible to the owner on their own turn only. */
+function inspectProps(game: GameState, viewerId: string, tileId: string): BoardCenterProps {
+  const base = centerProps(game, true);
+  const owner = game.players.find((p) => p.id === game.owners[tileId]);
+  return {
+    ...base,
+    player: currentPlayer(game),
+    viewerId,
+    displayTile: BOARD.find((t) => t.id === tileId) ?? null,
+    tileOwner: owner,
+    sellReason: (id: string) => sellBlockReason(game, viewerId, id),
+    onSell: () => {},
+  } as BoardCenterProps;
+}
+
+test("the owner sees SELL on their own turn; other players do not", () => {
+  const game = powerGame(); // p0 is the turn player and owns tile_03
+  const rollGame = structuredClone(game);
+  rollGame.phase = "roll";
+  rollGame.powerInteraction = null;
+  const ownerHtml = renderToStaticMarkup(createElement(BoardCenter, inspectProps(rollGame, "p0", "tile_03")));
+  assert.match(ownerHtml, /SELL · \$/);
+  assert.doesNotMatch(ownerHtml, /CONFIRM SALE/, "a sale needs a second tap");
+
+  const rivalHtml = renderToStaticMarkup(createElement(BoardCenter, inspectProps(rollGame, "p1", "tile_03")));
+  assert.doesNotMatch(rivalHtml, /SELL · \$/);
+});
+
+test("a blocked sale shows a disabled SELL with the reason, not a live button", () => {
+  const game = powerGame();
+  game.phase = "roll";
+  game.powerInteraction = null;
+  game.buildings.tile_03 = 1; // BANGKOK has a building: its colour set cannot be sold piece by piece
+  const html = renderToStaticMarkup(createElement(BoardCenter, inspectProps(game, "p0", "tile_03")));
+  assert.match(html, /<button[^>]*sell-action[^>]*disabled/);
+  assert.match(html, /Sell the buildings in this colour set first\./);
 });
