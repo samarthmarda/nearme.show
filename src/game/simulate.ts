@@ -1,4 +1,4 @@
-import { applyPowerCommand, buy, createGame, netWorth, passProperty, roll } from "./engine";
+import { applyPowerCommand, buy, createGame, netWorth, passProperty, payJailBail, roll, skipJailTurn } from "./engine";
 import { BOARD, RULES } from "./rules";
 
 function rngFor(seed: number) {
@@ -34,6 +34,15 @@ export function simulateBatch(gamesPerPlayerCount = 100) {
       let rolls = 0;
 
       for (; rolls < maxRolls && state.phase !== "finished"; rolls++) {
+        const active = state.players[state.turn];
+        if (state.phase === "roll" && active?.jailed) {
+          state = active.cash >= RULES.jail.bailCost
+            ? payJailBail(state).state
+            : skipJailTurn(state).state;
+          if (state.phase !== "roll" || state.players[state.turn]?.id !== active.id) {
+            continue;
+          }
+        }
         state = roll(state, undefined, rng).state;
         if (state.phase === "power") {
           // Baseline agent takes no Super Power: it declines on the choice page.

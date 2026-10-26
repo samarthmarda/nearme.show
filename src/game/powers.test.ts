@@ -31,12 +31,13 @@ function table(): GameState {
   return createGame(["Red", "Blue", "Green", "Gold"]);
 }
 
-/** Put player `playerId` on the SUPER POWER stop (tile_15) via a real roll. */
+/** Put player `playerId` on the first SUPER POWER stop (tile_16) via a real roll. */
 function landOnPower(state: GameState, playerId = "p0", roll6 = 1): GameState {
+  const powerIdx = BOARD.findIndex((t) => t.kind === "power");
   const next = structuredClone(state);
   next.turn = next.players.findIndex((p) => p.id === playerId);
   next.phase = "roll";
-  next.players.find((p) => p.id === playerId)!.position = 15 - roll6;
+  next.players.find((p) => p.id === playerId)!.position = powerIdx - roll6;
   const landed = roll(next, roll6, () => 0).state;
   assert.equal(landed.phase, "power", "landing on SUPER POWER opens the power phase");
   return landed;
@@ -583,11 +584,11 @@ test("RENT FREE progress counts only completed START crossings and expires after
 
 test("a landing on the third circuit's crossing is charged normally after protection expires", () => {
   const state = table();
-  state.owners.tile_03 = "p1"; // BANGKOK, light-blue, one owned: rent $15
-  state.players[1].properties.push("tile_03");
+  state.owners.tile_05 = "p1"; // BANGKOK, light-blue, one owned: rent $15
+  state.players[1].properties.push("tile_05");
   state.rentFree.p0 = { remainingCircuits: 1, activatedRound: 1 };
-  state.players[0].position = 33;
-  const result = roll(state, 6, () => 0).state; // 33 → 39 = tile_03, crossing START (expiry) first
+  state.players[0].position = 35;
+  const result = roll(state, 6, () => 0).state; // 35 → 41 = tile_05, crossing START (expiry) first
   assert.equal(result.rentFree.p0, undefined);
   assert.equal(result.players[0].cash, state.players[0].cash + RULES.salary - 15);
   assert.equal(result.players[1].cash, state.players[1].cash + 15);
