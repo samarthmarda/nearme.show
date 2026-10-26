@@ -13,6 +13,6 @@ The repository began as a client-side Vite/React prototype. It now includes Scam
 Move to Next.js web, a separate Node/TypeScript Socket.IO game service, PostgreSQL/Prisma for users/ledger/events/snapshots, and Redis for presence/pub-sub and multi-node rooms. Add transaction/idempotency persistence, reconnection replay/snapshots, email verification/reset, rate limits, moderation, observability, admin audit and deployment security before public launch.
 
 ## Trust boundary
-Dice, cash, ownership, rent, purchase validity, development and turn state are server-generated for room games. The browser animates and renders; it cannot submit authoritative results. The current room server supports the basic roll/buy/pass/build/end-turn command path. Advanced social-economy and power actions are roadmap items, not implemented commands.
+Dice, cash, ownership, rent, purchase validity, development and turn state are server-generated for room games. The browser animates and renders; it cannot submit authoritative results. The room server supports the roll/buy/pass/build command path and the four Super Power commands (choose, select, confirm/decline, cancel). Every Super Power command is validated and resolved by the same engine; there is no separate power engine. Trades beyond the AUCTION / POWER SWAP steps are not implemented.
 
 See `GAME_RULES.md`, `BOARD.md`, `PROPERTY_ECONOMY.md`, `DATABASE.md`, `REALTIME_PROTOCOL.md`, and `BALANCING.md`.

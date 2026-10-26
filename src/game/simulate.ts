@@ -1,4 +1,4 @@
-import { buy, createGame, netWorth, passProperty, roll } from "./engine";
+import { applyPowerCommand, buy, createGame, netWorth, passProperty, payJailBail, roll, skipJailTurn } from "./engine";
 import { BOARD, RULES } from "./rules";
 
 function rngFor(seed: number) {
@@ -12,7 +12,7 @@ function rngFor(seed: number) {
 export function simulateBatch(gamesPerPlayerCount = 100) {
   const report: Record<string, unknown> = {
     gamesPerPlayerCount,
-    agent: "baseline: buy every affordable unowned asset, otherwise pass; no negotiation/powers/development",
+    agent: "baseline: buy every affordable unowned asset, otherwise pass; declines every Super Power; no negotiation/development",
     results: {},
   };
   const results = report.results as Record<string, unknown>;
@@ -34,7 +34,21 @@ export function simulateBatch(gamesPerPlayerCount = 100) {
       let rolls = 0;
 
       for (; rolls < maxRolls && state.phase !== "finished"; rolls++) {
+        const active = state.players[state.turn];
+        if (state.phase === "roll" && active?.jailed) {
+          state = active.cash >= RULES.jail.bailCost
+            ? payJailBail(state).state
+            : skipJailTurn(state).state;
+          if (state.phase !== "roll" || state.players[state.turn]?.id !== active.id) {
+            continue;
+          }
+        }
         state = roll(state, undefined, rng).state;
+        if (state.phase === "power") {
+          // Baseline agent takes no Super Power: it declines on the choice page.
+          state = applyPowerCommand(state, state.players[state.turn].id, { type: "POWER_CANCEL" }).state;
+          continue;
+        }
         if (state.phase !== "decision") continue;
 
         const player = state.players[state.turn];

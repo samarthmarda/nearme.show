@@ -44,3 +44,7 @@ The authoritative `BOARD` array is in `src/game/rules.ts`. It contains 36 clockw
 City ownership groups are Green, Light Blue, Pink, Orange, Light Green, Gold, Purple, and Red. G9 (Boat, Railways, Airport) and G10 (Seven-11, Rave Club, Gym) are three-asset groups with their own sheet-specified rent tiers; they are not developable city sets. The Property Tax tile charges $50. Jail is a visit tile; there is no Go To Jail tile.
 
 Every property tile displays its group strip, value, owner marker, and any development indicator. Tap a tile to inspect the sheet's value, rent schedule, sell price, development costs, and owner. A landing is highlighted on the board and echoed in the center status panel.
+
+## Super Power spaces
+
+`tile_15` and `tile_27` are SUPER POWER. Landing on either opens the power choice (see `SUPER_POWERS.md`). The BOMB missile originates from `tile_20` (ISRAEL) in the centre-board animation.

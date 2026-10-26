@@ -1,3 +1,5 @@
+import { BANK_CUES } from "./bankCues";
+
 export type TileKind =
   | "start"
   | "city"
@@ -11,11 +13,11 @@ export type TileKind =
 export type RentSchedule = {
   /** Rent with one property in the group. */
   one: number;
-  /** Rent when the owner has two properties in the group. */
+  /** Rent when the owner has two properties in the group (full set for 2-property Purple). */
   two: number;
   /** Rent when the owner has the complete three-property group. */
   three: number;
-  /** Exact rent at Hotel 1, Hotel 2, Hotel 3, and Tower. */
+  /** Exact rent at House 1, House 2, House 3, and Tower. */
   development?: readonly [number, number, number, number];
 };
 
@@ -36,55 +38,112 @@ export type Tile = {
   taxAmount?: number;
 };
 
+export type PlayerCountOption = 2 | 3 | 4 | 5 | 6;
+export type RoundLimitOption = 30 | 50 | null;
+export type NetWorthGoalOption = 3000 | 5000 | 7000;
+
+export type MatchSettings = {
+  mode: "LIVE";
+  maxPlayers: PlayerCountOption;
+  roundLimit: RoundLimitOption;
+  targetNetWorth: NetWorthGoalOption;
+};
+
+export const PLAYER_COUNT_OPTIONS: readonly PlayerCountOption[] = [2, 3, 4, 5, 6];
+export const ROUND_LIMIT_OPTIONS: readonly RoundLimitOption[] = [30, 50, null];
+export const NET_WORTH_GOAL_OPTIONS: readonly NetWorthGoalOption[] = [
+  3000,
+  5000,
+  7000,
+];
+
+export const DEFAULT_PRIVATE_SETTINGS: MatchSettings = {
+  mode: "LIVE",
+  maxPlayers: 2,
+  roundLimit: null,
+  targetNetWorth: 7000,
+};
+
 export const RULES = {
-  version: "scam-city-v2",
-  boardVersion: "36-tile-scamcity-v2",
+  version: "scam-city-v3",
+  boardVersion: "36-tile-landlords-v3",
+  players: { min: 2, max: 6 },
   startingCashByOrder: [1000, 1050, 1100, 1150, 1200, 1250],
   salary: 300,
   victory: { targetNetWorth: 5000, roundLimit: 30 },
-  timing: { turnSeconds: 30, propertySeconds: 15, powerSeconds: 20, exchangeSeconds: 60 },
+  bankruptcy: {
+    /** Strictly: cash < -500 triggers bankruptcy (-$500 does not, -$501 does). */
+    minCash: -500,
+    /** Strictly: netWorth <= 0 triggers bankruptcy. */
+    minNetWorthExclusive: 0,
+  },
+  inactivity: {
+    warnAfterMissedTurns: 2,
+    forfeitAfterMissedTurns: 3,
+    disconnectGraceSeconds: 60,
+  },
+  jail: {
+    tileId: "tile_18",
+    tileIndex: 18,
+    bailCost: 150,
+  },
+  timing: {
+    turnSeconds: 30,
+    propertySeconds: 15,
+    /** Super Power choice page (four powers + CANCEL). */
+    powerSeconds: 20,
+    /** Bomb / Power Swap selection steps. */
+    powerActionSeconds: 30,
+    /** Whole Auction interaction, from initiation until trade, cancel or expiry. */
+    auctionSeconds: 69,
+  },
+  powers: {
+    rentFreeCircuits: 3,
+    bombRoundingStep: 5,
+    bombMinimumRent: 1,
+  },
   property: {
     developmentSellRate: 0.5,
     conditionLevels: [1, 0.75, 0.5, 0.25] as const,
   },
   development: {
-    levels: ["HOTEL 1", "HOTEL 2", "HOTEL 3", "TOWER"] as const,
+    levels: ["HOUSE 1", "HOUSE 2", "HOUSE 3", "TOWER"] as const,
+    maxHouses: 29,
   },
   economy: { bankruptcyThreshold: 3000, exchangeBonus: 100 },
   bank: {
     maxResolutionDepth: 3,
-    outcomes: [
-      { type: "cash", amount: 150, weight: 10 },
-      { type: "cash", amount: 100, weight: 10 },
-      { type: "cash", amount: 250, weight: 2 },
-      { type: "cash", amount: 50, weight: 10 },
-      { type: "cash", amount: -100, weight: 10 },
-      { type: "cash", amount: -150, weight: 10 },
-      { type: "lowest", amount: 50, weight: 10 },
-      { type: "move", spaces: 3, weight: 10 },
-      { type: "move", spaces: -3, weight: 10 },
-      { type: "travel", weight: 10 },
-    ] as const,
+    cueCount: BANK_CUES.length,
   },
 } as const;
 
-const palette: Record<string, string> = {
-  green: "#55a86e",
-  "light-blue": "#65abc5",
-  pink: "#d77da4",
-  orange: "#e59156",
-  "light-green": "#8ab56f",
-  gold: "#d1ac4f",
-  purple: "#9275bd",
-  red: "#d9675d",
-  G9: "#7185a8",
-  G10: "#9670ad",
-  tax: "#d48c5e",
-  start: "#6f9c77",
-  bank: "#b9a16b",
-  power: "#efbd4e",
-  jail: "#748579",
+export const GROUP_PALETTE: Record<string, string> = {
+  green: "#1e9b52",
+  "light-blue": "#1b84de",
+  pink: "#d92b8a",
+  orange: "#e46b13",
+  "light-green": "#53ad57",
+  gold: "#d89515",
+  purple: "#6c3fd1",
+  red: "#de3545",
+  G9: "#436280",
+  G10: "#8d5b2d",
+  tax: "#d67229",
+  start: "#1f9d57",
+  bank: "#c8961e",
+  power: "#e5a817",
+  jail: "#516575",
 };
+
+/** Distinct player colours kept visually separate from property-group tones. */
+export const PLAYER_COLORS = [
+  "#ff4757",
+  "#00b8d9",
+  "#ffab00",
+  "#9b5de5",
+  "#2ed573",
+  "#ff6bcb",
+] as const;
 
 type PropertyData = {
   price: number;
@@ -108,7 +167,7 @@ const property = (
   name,
   kind,
   group,
-  tone: palette[group],
+  tone: GROUP_PALETTE[group],
   price: data.price,
   rent: data.rents[0],
   sellValue: data.sell,
@@ -152,14 +211,13 @@ const lightGreenDevelopment = [180, 270, 445, 590] as const;
 const goldRent = [40, 60, 80] as const;
 const goldDevelopment = [210, 355, 505, 720] as const;
 const purpleDevelopment = [245, 420, 630, 940] as const;
-const redDevelopment = [330, 660, 880, 1120] as const;
 
 /**
- * Property prices and rent schedules are transcribed from the SCAMCITY sheet.
- * Group 2 / full-group rents are explicit data: they are not multipliers.
+ * Authoritative 36-tile clockwise perimeter board transcribed from landlords.xlsx
+ * (Sheet1!B4:K13 & Sheet1!A15:Q46).
  */
 export const BOARD: Tile[] = [
-  { id: "tile_00", name: "START", kind: "start", tone: palette.start },
+  { id: "tile_00", name: "START", kind: "start", tone: GROUP_PALETTE.start },
   city(1, "DELHI", "green", {
     price: 110,
     sell: 100,
@@ -180,24 +238,14 @@ export const BOARD: Tile[] = [
     developmentRents: greenDevelopment,
     repairCost: 25,
   }),
-  city(3, "BANGKOK", "light-blue", {
-    price: 130,
-    sell: 115,
-    mortgage: 80,
-    unmortgage: 90,
-    rents: lightBlueRent,
-    developmentCost: 70,
-    developmentRents: lightBlueDevelopment,
-    repairCost: 35,
-  }),
-  business(4, "SEVEN-11", {
+  business(3, "SEVEN-11", {
     price: 200,
     sell: 200,
     mortgage: 140,
     unmortgage: 160,
-    rents: [50, 100, 200],
+    rents: [50, 120, 200],
   }),
-  city(5, "MUMBAI", "green", {
+  city(4, "MUMBAI", "green", {
     price: 120,
     sell: 100,
     mortgage: 70,
@@ -206,6 +254,16 @@ export const BOARD: Tile[] = [
     developmentCost: 50,
     developmentRents: greenDevelopment,
     repairCost: 25,
+  }),
+  city(5, "BANGKOK", "light-blue", {
+    price: 130,
+    sell: 115,
+    mortgage: 80,
+    unmortgage: 90,
+    rents: lightBlueRent,
+    developmentCost: 70,
+    developmentRents: lightBlueDevelopment,
+    repairCost: 35,
   }),
   transport(6, "BOAT", {
     price: 150,
@@ -234,7 +292,7 @@ export const BOARD: Tile[] = [
     developmentRents: lightBlueDevelopment,
     repairCost: 35,
   }),
-  { id: "tile_09", name: "BANK", kind: "bank", tone: palette.bank },
+  { id: "tile_09", name: "BANK", kind: "bank", tone: GROUP_PALETTE.bank },
   city(10, "JAKARTA", "pink", {
     price: 160,
     sell: 130,
@@ -282,8 +340,7 @@ export const BOARD: Tile[] = [
     developmentRents: orangeDevelopment,
     repairCost: 60,
   }),
-  { id: "tile_15", name: "SUPER POWER", kind: "power", tone: palette.power },
-  city(16, "SEOUL", "orange", {
+  city(15, "SEOUL", "orange", {
     price: 220,
     sell: 190,
     mortgage: 160,
@@ -293,6 +350,12 @@ export const BOARD: Tile[] = [
     developmentRents: orangeDevelopment,
     repairCost: 60,
   }),
+  {
+    id: "tile_16",
+    name: "SUPER POWER",
+    kind: "power",
+    tone: GROUP_PALETTE.power,
+  },
   city(17, "HONG KONG", "orange", {
     price: 240,
     sell: 200,
@@ -303,8 +366,8 @@ export const BOARD: Tile[] = [
     developmentRents: orangeDevelopment,
     repairCost: 60,
   }),
-  { id: "tile_18", name: "JAIL", kind: "jail", tone: palette.jail },
-  city(19, "ZURICH", "light-green", {
+  { id: "tile_18", name: "JAIL", kind: "jail", tone: GROUP_PALETTE.jail },
+  city(19, "SYRIA", "light-green", {
     price: 255,
     sell: 210,
     mortgage: 180,
@@ -329,7 +392,7 @@ export const BOARD: Tile[] = [
     sell: 150,
     mortgage: 100,
     unmortgage: 110,
-    rents: [50, 100, 200],
+    rents: [50, 120, 200],
   }),
   city(22, "RIYADH", "light-green", {
     price: 275,
@@ -355,7 +418,7 @@ export const BOARD: Tile[] = [
     id: "tile_24",
     name: "PROPERTY TAX",
     kind: "tax",
-    tone: palette.tax,
+    tone: GROUP_PALETTE.tax,
     taxAmount: 50,
   },
   city(25, "SAUDI", "gold", {
@@ -378,13 +441,13 @@ export const BOARD: Tile[] = [
     developmentRents: goldDevelopment,
     repairCost: 90,
   }),
-  { id: "tile_27", name: "SUPER POWER", kind: "power", tone: palette.power },
+  { id: "tile_27", name: "BANK", kind: "bank", tone: GROUP_PALETTE.bank },
   city(28, "PARIS", "purple", {
     price: 350,
     sell: 310,
     mortgage: 280,
     unmortgage: 310,
-    rents: [40, 70, 105],
+    rents: [40, 90, 90],
     developmentCost: 195,
     developmentRents: purpleDevelopment,
     repairCost: 100,
@@ -394,7 +457,7 @@ export const BOARD: Tile[] = [
     sell: 320,
     mortgage: 280,
     unmortgage: 310,
-    rents: [45, 70, 105],
+    rents: [45, 90, 90],
     developmentCost: 195,
     developmentRents: purpleDevelopment,
     repairCost: 100,
@@ -404,36 +467,9 @@ export const BOARD: Tile[] = [
     sell: 200,
     mortgage: 140,
     unmortgage: 160,
-    rents: [50, 100, 200],
+    rents: [50, 120, 200],
   }),
-  city(31, "BIRMINGHAM", "purple", {
-    price: 360,
-    sell: 330,
-    mortgage: 300,
-    unmortgage: 330,
-    rents: [55, 70, 105],
-    developmentCost: 195,
-    developmentRents: purpleDevelopment,
-    repairCost: 100,
-  }),
-  city(32, "CHICAGO", "red", {
-    price: 420,
-    sell: 370,
-    mortgage: 350,
-    unmortgage: 385,
-    rents: [60, 80, 120],
-    developmentCost: 225,
-    developmentRents: redDevelopment,
-    repairCost: 110,
-  }),
-  transport(33, "AIRPORT", {
-    price: 200,
-    sell: 200,
-    mortgage: 140,
-    unmortgage: 160,
-    rents: [50, 100, 200],
-  }),
-  city(34, "CALIFORNIA", "red", {
+  city(31, "CALIFORNIA", "red", {
     price: 420,
     sell: 380,
     mortgage: 350,
@@ -443,6 +479,29 @@ export const BOARD: Tile[] = [
     developmentRents: [440, 660, 880, 1120],
     repairCost: 110,
   }),
+  city(32, "CHICAGO", "red", {
+    price: 420,
+    sell: 370,
+    mortgage: 350,
+    unmortgage: 385,
+    rents: [60, 80, 120],
+    developmentCost: 225,
+    developmentRents: [330, 660, 880, 1120],
+    repairCost: 110,
+  }),
+  transport(33, "AIRPORT", {
+    price: 200,
+    sell: 200,
+    mortgage: 140,
+    unmortgage: 160,
+    rents: [50, 100, 200],
+  }),
+  {
+    id: "tile_34",
+    name: "SUPER POWER",
+    kind: "power",
+    tone: GROUP_PALETTE.power,
+  },
   city(35, "NEW YORK", "red", {
     price: 450,
     sell: 400,
@@ -461,42 +520,35 @@ export const POWER_OPTIONS = [
     name: "BOMB",
     icon: "✹",
     color: "#f17858",
-    description: "Damage up to two rival properties. Their rent takes a hit.",
+    description: "Halve one rival property's rent. Ownership does not change.",
   },
   {
-    id: "controlled-roll",
-    name: "CONTROLLED ROLL",
-    icon: "⚄",
+    id: "power-swap",
+    name: "POWER SWAP",
+    icon: "⇄",
     color: "#56a9d1",
-    description: "Choose a precise 1–6 roll before your next move.",
-  },
-  {
-    id: "hotel-pass",
-    name: "FREE HOTEL PASS",
-    icon: "▣",
-    color: "#a18bd2",
-    description: "Waive the cash cost of one eligible final upgrade.",
-  },
-  {
-    id: "jail-pass",
-    name: "JAIL FREE PASS",
-    icon: "↗",
-    color: "#62ae78",
-    description: "Keep in your pocket. Use it to walk out of Jail.",
+    description: "Force a swap: one rival property for one of yours.",
   },
   {
     id: "auction",
-    name: "PROPERTY EXCHANGE",
-    icon: "⇄",
+    name: "AUCTION",
+    icon: "◎",
     color: "#d7ac44",
-    description: "Open a timed property-for-property exchange.",
+    description: "Offer one of yours. A rival's offer can be swapped for it; both earn $100.",
+  },
+  {
+    id: "rent-free",
+    name: "RENT FREE ROUND",
+    icon: "✦",
+    color: "#62ae78",
+    description: "Rent and property charges are blocked for three circuits.",
   },
 ] as const;
 
 export type PowerId = (typeof POWER_OPTIONS)[number]["id"];
 
 export const PRESETS = {
-  QUICK: { target: 3000, rounds: 20 },
-  STANDARD: { target: 5000, rounds: 30 },
-  LONG: { target: 7000, rounds: 40 },
+  QUICK: { target: 3000, rounds: 30 },
+  STANDARD: { target: 5000, rounds: 50 },
+  LONG: { target: 7000, rounds: null },
 } as const;
